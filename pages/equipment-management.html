@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTMS · 设备管理</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+</head>
+<body data-auth-page="equipment">
+    <div id="app" class="module-shell operations-shell">
+        <header class="app-header">
+            <a class="back-link" href="../index.html">← 返回主页</a>
+            <div>
+                <h1>设备管理子系统</h1>
+                <p>岸桥、AGV、场桥状态监控、任务分配与故障维护</p>
+            </div>
+            <span class="time-display">{{ currentTime }}</span>
+        </header>
+
+        <main class="main-content operations-content">
+            <section class="ship-tabs">
+                <button class="tab-btn" :class="{ active: activeTab === 'dashboard' }" @click="activeTab = 'dashboard'">设备总览</button>
+                <button class="tab-btn" :class="{ active: activeTab === 'devices' }" @click="activeTab = 'devices'">设备台账</button>
+                <button class="tab-btn" :class="{ active: activeTab === 'assign' }" @click="activeTab = 'assign'">任务分配</button>
+                <button class="tab-btn" :class="{ active: activeTab === 'maintenance' }" @click="activeTab = 'maintenance'">故障维护</button>
+            </section>
+
+            <section v-if="activeTab === 'dashboard'" class="operations-dashboard">
+                <div class="operations-kpis">
+                    <article class="operation-kpi">
+                        <span>设备总数</span>
+                        <strong>{{ equipment.length }}</strong>
+                        <small>岸桥 / AGV / 场桥</small>
+                    </article>
+                    <article class="operation-kpi">
+                        <span>空闲</span>
+                        <strong>{{ statusCounts.idle }}</strong>
+                        <small>可立即分配任务</small>
+                    </article>
+                    <article class="operation-kpi">
+                        <span>工作中</span>
+                        <strong>{{ statusCounts.working }}</strong>
+                        <small>正在执行作业单</small>
+                    </article>
+                    <article class="operation-kpi">
+                        <span>故障</span>
+                        <strong>{{ statusCounts.fault }}</strong>
+                        <small>需要维修处理</small>
+                    </article>
+                </div>
+
+                <section class="card">
+                    <div class="card-header">
+                        <strong>设备运行看板</strong>
+                        <span>每 5 秒自动刷新</span>
+                    </div>
+                    <div class="equipment-grid">
+                        <article v-for="item in equipment" :key="item.id" class="equipment-card" :class="'equipment-' + statusKey(item.status)">
+                            <div class="equipment-card-head">
+                                <div>
+                                    <strong>{{ item.name }}</strong>
+                                    <span>{{ item.code }} · {{ item.equipmentType }}</span>
+                                </div>
+                                <span :class="'status-badge equipment-status-' + statusKey(item.status)">{{ item.status }}</span>
+                            </div>
+                            <div class="equipment-meta">
+                                <span>位置：{{ item.location || '-' }}</span>
+                                <span>效率：{{ item.efficiency || '-' }} 箱/h</span>
+                                <span>任务：{{ item.currentTaskName || '无' }}</span>
+                            </div>
+                        </article>
+                    </div>
+                </section>
+            </section>
+
+            <section v-if="activeTab === 'devices'" class="card">
+                <div class="card-header">
+                    <div>
+                        <strong>设备台账</strong>
+                        <span>共 {{ filteredEquipment.length }} 台</span>
+                    </div>
+                    <button class="btn btn-primary" @click="openDeviceDialog()">新增设备</button>
+                </div>
+                <div class="toolbar compact-toolbar">
+                    <button class="btn btn-sm" :class="filterStatus === 'all' ? 'btn-primary' : 'btn-outline'" @click="filterStatus = 'all'">全部</button>
+                    <button class="btn btn-sm" :class="filterStatus === '空闲' ? 'btn-primary' : 'btn-outline'" @click="filterStatus = '空闲'">空闲</button>
+                    <button class="btn btn-sm" :class="filterStatus === '工作中' ? 'btn-primary' : 'btn-outline'" @click="filterStatus = '工作中'">工作中</button>
+                    <button class="btn btn-sm" :class="filterStatus === '故障' ? 'btn-primary' : 'btn-outline'" @click="filterStatus = '故障'">故障</button>
+                    <input class="push-right" v-model.trim="searchQuery" placeholder="搜索设备编号、名称、类型">
+                </div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>编号</th>
+                                <th>设备名称</th>
+                                <th>类型</th>
+                                <th>状态</th>
+                                <th>位置</th>
+                                <th>效率</th>
+                                <th>当前任务</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="item in filteredEquipment" :key="item.id">
+                                <td class="text-mono">{{ item.code }}</td>
+                                <td><strong>{{ item.name }}</strong></td>
+                                <td>{{ item.equipmentType }}</td>
+                                <td><span :class="'status-badge equipment-status-' + statusKey(item.status)">{{ item.status }}</span></td>
+                                <td>{{ item.location || '-' }}</td>
+                                <td>{{ item.efficiency || '-' }} 箱/h</td>
+                                <td>{{ item.currentTaskName || '-' }}</td>
+                                <td class="actions">
+                                    <button class="btn btn-outline btn-sm" @click="openDeviceDialog(item)">编辑</button>
+                                    <button class="btn btn-primary btn-sm" :disabled="item.status !== '工作中'" @click="releaseEquipment(item)">完成任务</button>
+                                    <button class="btn btn-danger btn-sm" @click="deleteEquipment(item)">删除</button>
+                                </td>
+                            </tr>
+                            <tr v-if="filteredEquipment.length === 0">
+                                <td colspan="8" class="empty-cell">暂无设备数据</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section v-if="activeTab === 'assign'" class="grid-two">
+                <article class="card">
+                    <div class="card-header">
+                        <strong>待分配任务</strong>
+                        <span>{{ assignableTasks.length }} 条</span>
+                    </div>
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>任务</th>
+                                    <th>箱号</th>
+                                    <th>路径</th>
+                                    <th>状态</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="task in assignableTasks" :key="task.id" :class="{ selected: selectedTaskId === String(task.id) }" @click="selectedTaskId = String(task.id)">
+                                    <td><strong>{{ task.taskName }}</strong></td>
+                                    <td class="text-mono">{{ task.containerId || '-' }}</td>
+                                    <td>{{ task.origin }} → {{ task.destination }}</td>
+                                    <td>{{ task.status }}</td>
+                                </tr>
+                                <tr v-if="assignableTasks.length === 0">
+                                    <td colspan="4" class="empty-cell">暂无待分配任务</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+
+                <article class="card">
+                    <div class="card-header">
+                        <strong>选择空闲设备</strong>
+                        <span>{{ selectedTaskRequiredType ? `需要 ${selectedTaskRequiredType}` : '请选择任务' }} · {{ idleEquipment.length }} 台可用</span>
+                    </div>
+                    <div class="equipment-assign-list">
+                        <article v-for="item in idleEquipment" :key="item.id" class="recommend-item">
+                            <div>
+                                <strong>{{ item.name }} → {{ selectedTaskSummary }}</strong>
+                                <span>{{ item.code }} · {{ item.equipmentType }} · {{ item.location || '-' }}</span>
+                                <small>效率 {{ item.efficiency || '-' }} 箱/h</small>
+                            </div>
+                            <button class="btn btn-primary btn-sm" :disabled="!selectedTaskId" @click="assignTask(item)">分配</button>
+                        </article>
+                        <p v-if="idleEquipment.length === 0" class="empty-note">暂无匹配的空闲设备，需等待同类型设备释放、维修完成或新增对应设备。</p>
+                    </div>
+                </article>
+            </section>
+
+            <section v-if="activeTab === 'maintenance'" class="card">
+                <div class="card-header">
+                    <strong>故障维护</strong>
+                    <span>故障设备不能分配任务</span>
+                </div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>设备</th>
+                                <th>类型</th>
+                                <th>位置</th>
+                                <th>状态</th>
+                                <th>上次维护</th>
+                                <th>备注</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="item in equipment" :key="item.id">
+                                <td><strong>{{ item.name }}</strong><br><small class="text-mono">{{ item.code }}</small></td>
+                                <td>{{ item.equipmentType }}</td>
+                                <td>{{ item.location || '-' }}</td>
+                                <td><span :class="'status-badge equipment-status-' + statusKey(item.status)">{{ item.status }}</span></td>
+                                <td>{{ item.lastMaintenanceAt || '-' }}</td>
+                                <td>{{ item.remark || '-' }}</td>
+                                <td class="actions">
+                                    <button class="btn btn-danger btn-sm" :disabled="item.status === '故障'" @click="markFault(item)">标记故障</button>
+                                    <button class="btn btn-primary btn-sm" :disabled="item.status !== '故障'" @click="repairEquipment(item)">维修完成</button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+
+        <div class="modal-overlay" v-if="showDeviceDialog" @click.self="closeDeviceDialog">
+            <form class="modal" @submit.prevent="saveEquipment">
+                <h2>{{ editingEquipmentId ? '编辑设备' : '新增设备' }}</h2>
+                <div class="form-grid">
+                    <label>设备编号<input v-model.trim="deviceForm.code" required placeholder="QC03"></label>
+                    <label>设备名称<input v-model.trim="deviceForm.name" required placeholder="岸桥3"></label>
+                    <label>设备类型
+                        <select v-model="deviceForm.equipmentType">
+                            <option>岸桥</option>
+                            <option>AGV</option>
+                            <option>场桥</option>
+                        </select>
+                    </label>
+                    <label>状态
+                        <select v-model="deviceForm.status">
+                            <option>空闲</option>
+                            <option>工作中</option>
+                            <option>故障</option>
+                        </select>
+                    </label>
+                    <label>当前位置<input v-model.trim="deviceForm.location" placeholder="泊位1 / 堆场A"></label>
+                    <label>效率（箱/h）<input type="number" min="0" v-model.number="deviceForm.efficiency"></label>
+                    <label class="form-wide">备注<input v-model.trim="deviceForm.remark" placeholder="维护说明或设备能力说明"></label>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-outline" @click="closeDeviceDialog">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="../js/auth-guard.js"></script>
+    <script src="../js/equipment-management.js"></script>
+</body>
+</html>

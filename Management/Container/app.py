@@ -10,8 +10,9 @@ if str(MANAGEMENT_DIR) not in sys.path:
     sys.path.insert(0, str(MANAGEMENT_DIR))
 
 from config import Config
-from Container.models.container_model import Container, Ship, Task, User, Yard, db
+from Container.models.container_model import Container, Equipment, Ship, Task, User, Yard, db
 from routes.container_route import container_bp
+from routes.equipment_route import equipment_bp
 from routes.ship_route import ship_bp
 from routes.task_route import task_bp
 from routes.yard_route import yard_bp
@@ -30,6 +31,7 @@ def create_app():
 
     db.init_app(app)
     app.register_blueprint(container_bp)
+    app.register_blueprint(equipment_bp)
     app.register_blueprint(ship_bp)
     app.register_blueprint(task_bp)
     app.register_blueprint(yard_bp)
@@ -59,6 +61,7 @@ def create_app():
             request.path.startswith('/yards') or
             request.path.startswith('/ships') or
             request.path.startswith('/tasks') or
+            request.path.startswith('/equipment') or
             request.path.startswith('/api/dashboard')
         ):
             return jsonify({"message": "\u8bf7\u5148\u767b\u5f55"}), 401
@@ -153,6 +156,7 @@ def create_app():
         yards = Yard.query.all()
         ships = Ship.query.all()
         tasks = Task.query.all()
+        equipment = Equipment.query.all()
 
         yard_total = sum(yard.total_capacity for yard in yards)
         yard_used = sum(yard.used_capacity() for yard in yards)
@@ -177,6 +181,9 @@ def create_app():
                 "berthedShips": ship_counts["berthed"],
                 "taskTotal": len(tasks),
                 "runningTasks": task_counts["inProgress"],
+                "equipmentTotal": len(equipment),
+                "workingEquipment": sum(1 for item in equipment if item.status == '\u5de5\u4f5c\u4e2d'),
+                "faultEquipment": sum(1 for item in equipment if item.status == '\u6545\u969c'),
                 "alerts": sum(1 for yard in yards if yard.total_capacity and yard.used_capacity() / yard.total_capacity >= 0.8),
             },
             "taskStatus": task_counts,
@@ -191,12 +198,18 @@ def create_app():
                 }
                 for yard in yards
             ],
+            "equipmentStatus": {
+                "idle": sum(1 for item in equipment if item.status == '\u7a7a\u95f2'),
+                "working": sum(1 for item in equipment if item.status == '\u5de5\u4f5c\u4e2d'),
+                "fault": sum(1 for item in equipment if item.status == '\u6545\u969c'),
+            },
         })
 
     with app.app_context():
         db.create_all()
         ensure_ship_schema()
         ensure_task_schema()
+        ensure_equipment_schema()
         seed_data()
 
     return app
@@ -268,6 +281,19 @@ def seed_data():
         ))
         db.session.commit()
 
+    if Equipment.query.first() is None:
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        db.session.add_all([
+            Equipment(code='QC01', name='\u5cb8\u68651', equipment_type='\u5cb8\u6865', status='\u7a7a\u95f2', location='\u6cca\u4f4d1', efficiency=30, created_at=now, updated_at=now),
+            Equipment(code='QC02', name='\u5cb8\u68652', equipment_type='\u5cb8\u6865', status='\u7a7a\u95f2', location='\u6cca\u4f4d2', efficiency=30, created_at=now, updated_at=now),
+            Equipment(code='AGV01', name='AGV1', equipment_type='AGV', status='\u7a7a\u95f2', location='\u6cca\u4f4d\u524d\u6cbf', efficiency=20, created_at=now, updated_at=now),
+            Equipment(code='AGV02', name='AGV2', equipment_type='AGV', status='\u7a7a\u95f2', location='\u6cca\u4f4d\u524d\u6cbf', efficiency=20, created_at=now, updated_at=now),
+            Equipment(code='AGV03', name='AGV3', equipment_type='AGV', status='\u7a7a\u95f2', location='\u5806\u573aA', efficiency=20, created_at=now, updated_at=now),
+            Equipment(code='YC01', name='\u573a\u68651', equipment_type='\u573a\u6865', status='\u7a7a\u95f2', location='\u5806\u573aA', efficiency=25, created_at=now, updated_at=now),
+            Equipment(code='YC02', name='\u573a\u68652', equipment_type='\u573a\u6865', status='\u6545\u969c', location='\u5806\u573aB', efficiency=25, remark='\u6db2\u538b\u7cfb\u7edf\u5f85\u68c0\u4fee', created_at=now, updated_at=now),
+        ])
+        db.session.commit()
+
 
 def ensure_ship_schema():
     try:
@@ -300,6 +326,41 @@ def ensure_task_schema():
             db.session.execute(text("ALTER TABLE task ADD COLUMN start_time TEXT"))
         if 'end_time' not in columns:
             db.session.execute(text("ALTER TABLE task ADD COLUMN end_time TEXT"))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
+def ensure_equipment_schema():
+    try:
+        columns = {row[1] for row in db.session.execute(text("PRAGMA table_info(equipment)")).fetchall()}
+        if not columns:
+            return
+        required_columns = {
+            'code': "ALTER TABLE equipment ADD COLUMN code TEXT",
+            'name': "ALTER TABLE equipment ADD COLUMN name TEXT",
+            'equipment_type': "ALTER TABLE equipment ADD COLUMN equipment_type TEXT",
+            'status': "ALTER TABLE equipment ADD COLUMN status TEXT DEFAULT '\u7a7a\u95f2'",
+            'location': "ALTER TABLE equipment ADD COLUMN location TEXT",
+            'efficiency': "ALTER TABLE equipment ADD COLUMN efficiency INTEGER DEFAULT 0",
+            'current_task_id': "ALTER TABLE equipment ADD COLUMN current_task_id INTEGER",
+            'last_maintenance_at': "ALTER TABLE equipment ADD COLUMN last_maintenance_at TEXT",
+            'remark': "ALTER TABLE equipment ADD COLUMN remark TEXT",
+            'created_at': "ALTER TABLE equipment ADD COLUMN created_at TEXT",
+            'updated_at': "ALTER TABLE equipment ADD COLUMN updated_at TEXT",
+        }
+        for column, ddl in required_columns.items():
+            if column not in columns:
+                db.session.execute(text(ddl))
+        db.session.execute(text("UPDATE equipment SET code = 'EQ-' || id WHERE code IS NULL OR code = ''"))
+        db.session.execute(text("UPDATE equipment SET name = code WHERE name IS NULL OR name = ''"))
+        db.session.execute(text("UPDATE equipment SET equipment_type = CASE "
+                                "WHEN code LIKE 'QC%' OR name LIKE '%\u5cb8\u6865%' THEN '\u5cb8\u6865' "
+                                "WHEN code LIKE 'YC%' OR name LIKE '%\u573a\u6865%' THEN '\u573a\u6865' "
+                                "WHEN code LIKE 'AGV%' OR name LIKE '%AGV%' THEN 'AGV' "
+                                "ELSE 'AGV' END "
+                                "WHERE equipment_type IS NULL OR equipment_type = '' OR equipment_type = '\u901a\u7528\u8bbe\u5907'"))
+        db.session.execute(text("UPDATE equipment SET status = '\u7a7a\u95f2' WHERE status IS NULL OR status = ''"))
         db.session.commit()
     except Exception:
         db.session.rollback()

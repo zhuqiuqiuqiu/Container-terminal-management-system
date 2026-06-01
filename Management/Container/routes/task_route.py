@@ -2,7 +2,7 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request
 
-from Container.models.container_model import Container, Task, db
+from Container.models.container_model import Container, Equipment, Task, db
 
 
 task_bp = Blueprint('task_bp', __name__, url_prefix='/tasks')
@@ -99,6 +99,11 @@ def next_status(task_id):
         task.start_time = task.updated_at
     if task.status == 'completed':
         task.end_time = task.updated_at
+        equipment = Equipment.query.get(task.equipment_id) if task.equipment_id else None
+        if equipment:
+            equipment.status = '\u7a7a\u95f2'
+            equipment.current_task_id = None
+            equipment.updated_at = task.updated_at
     db.session.commit()
     return jsonify({"message": "\u4efb\u52a1\u72b6\u6001\u5df2\u66f4\u65b0", "data": task.to_dict()})
 

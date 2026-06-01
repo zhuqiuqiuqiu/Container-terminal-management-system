@@ -175,6 +175,12 @@ class Task(db.Model):
             return None
         return Container.query.get(self.container_id)
 
+    @property
+    def equipment(self):
+        if not self.equipment_id:
+            return None
+        return Equipment.query.get(self.equipment_id)
+
     def normalized_status(self):
         mapping = {
             'processing': 'in-progress',
@@ -186,6 +192,7 @@ class Task(db.Model):
 
     def to_dict(self):
         container = self.container
+        equipment = self.equipment
         return {
             "id": self.id,
             "task_no": self.task_no,
@@ -202,8 +209,48 @@ class Task(db.Model):
             "yardSlot": self.remark or '',
             "status": self.normalized_status(),
             "priority": self.priority or 3,
+            "equipmentId": self.equipment_id,
+            "equipmentName": equipment.name if equipment else '',
+            "equipmentCode": equipment.code if equipment else '',
             "estimatedTime": self.estimated_time,
             "actualTime": self.actual_time,
+            "createdAt": self.created_at,
+            "updatedAt": self.updated_at,
+        }
+
+
+class Equipment(db.Model):
+    __tablename__ = 'equipment'
+
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(30), unique=True, nullable=False)
+    name = db.Column(db.String(50), nullable=False)
+    equipment_type = db.Column(db.String(30), nullable=False)
+    status = db.Column(db.String(20), default='\u7a7a\u95f2')
+    location = db.Column(db.String(80))
+    efficiency = db.Column(db.Integer, default=0)
+    current_task_id = db.Column(db.Integer)
+    last_maintenance_at = db.Column(db.String(30))
+    remark = db.Column(db.String(200))
+    created_at = db.Column(db.String(30))
+    updated_at = db.Column(db.String(30))
+
+    def to_dict(self):
+        task = Task.query.get(self.current_task_id) if self.current_task_id else None
+        return {
+            "id": self.id,
+            "code": self.code,
+            "name": self.name,
+            "equipment_type": self.equipment_type,
+            "equipmentType": self.equipment_type,
+            "status": self.status or '\u7a7a\u95f2',
+            "location": self.location or '',
+            "efficiency": self.efficiency or 0,
+            "currentTaskId": self.current_task_id,
+            "currentTaskName": task.task_type if task else '',
+            "currentContainer": task.container.container_no if task and task.container else '',
+            "lastMaintenanceAt": self.last_maintenance_at,
+            "remark": self.remark or '',
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
         }
