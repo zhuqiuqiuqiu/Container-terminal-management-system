@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTMS · 堆场管理</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+</head>
+<body data-auth-page="yard">
+    <div id="app" class="module-shell">
+        <header class="app-header">
+            <a class="back-link" href="../index.html">← 返回主页</a>
+            <div>
+                <h1>堆场管理</h1>
+                <p>堆场容量、区域用途、箱位占用和智能堆位推荐</p>
+            </div>
+            <span class="time-display">{{ currentTime }}</span>
+        </header>
+
+        <main class="main-content">
+            <section class="toolbar">
+                <strong>堆场列表与容量状态</strong>
+                <button class="btn btn-primary push-right" @click="openYardDialog()">新增堆场</button>
+            </section>
+
+            <section class="yard-summary">
+                <article v-for="yard in yards" :key="yard.id || yard.yardName" class="summary-card">
+                    <div class="summary-title">{{ yard.yardName }}</div>
+                    <div class="summary-meta">用途：{{ yard.usageType }}</div>
+                    <div class="summary-meta">容量：{{ yard.usedCapacity }} / {{ yard.totalCapacity }}</div>
+                    <div class="usage-bar"><span :style="{ width: yard.usageRate + '%' }"></span></div>
+                    <div class="summary-meta">剩余：{{ yard.remainingCapacity }} 个箱位</div>
+                    <div class="summary-actions">
+                        <button class="btn btn-outline btn-sm" @click="openYardDialog(yard)">编辑</button>
+                        <button class="btn btn-danger btn-sm" @click="deleteYard(yard)">删除</button>
+                    </div>
+                </article>
+            </section>
+
+            <section class="allocation-panel">
+                <div>
+                    <strong>智能堆位分配</strong>
+                    <p>支持单箱推荐，也支持按船舶批量分配，同一船舶集装箱优先集中存放。</p>
+                </div>
+                <div class="allocation-actions">
+                    <select v-model="selectedShipId">
+                        <option value="">选择船舶</option>
+                        <option v-for="ship in ships" :key="ship.id" :value="String(ship.id)">{{ ship.name }} / {{ ship.voyage }}</option>
+                    </select>
+                    <button class="btn btn-primary" @click="runShipSmartAllocation">一键分配该船集装箱</button>
+                    <button class="btn btn-outline" @click="openAllocationModal">单箱推荐</button>
+                </div>
+            </section>
+
+            <section class="card" v-if="shipAllocationResult">
+                <div class="card-header">
+                    <strong>船舶批量分配结果</strong>
+                    <span>成功 {{ shipAllocationResult.assignedCount }} 个，跳过 {{ shipAllocationResult.skippedCount }} 个</span>
+                </div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>箱号</th>
+                                <th>分配堆场</th>
+                                <th>区域</th>
+                                <th>列</th>
+                                <th>层</th>
+                                <th>说明</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="item in shipAllocationResult.assignments" :key="item.container.id">
+                                <td>{{ item.container.containerNo || item.container.container_no }}</td>
+                                <td>{{ item.yard }}</td>
+                                <td>{{ item.area }}</td>
+                                <td>{{ item.column }}</td>
+                                <td>{{ item.layer }}</td>
+                                <td>{{ item.reason }}</td>
+                            </tr>
+                            <tr v-if="shipAllocationResult.assignments.length === 0">
+                                <td colspan="6" class="empty-cell">本次没有新增分配。</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="card-header">
+                    <strong>堆场剖面图</strong>
+                    <div class="select-group">
+                        <select v-model="selectedYard" @change="redrawYardMap">
+                            <option v-for="y in yardList" :key="y" :value="y">{{ y }}</option>
+                        </select>
+                        <select v-model="selectedZone" @change="redrawYardMap">
+                            <option v-for="z in zoneList" :key="z" :value="z">{{ z }}</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="legend">
+                    <span><i class="dot normal"></i>普通重箱</span>
+                    <span><i class="dot empty"></i>空箱</span>
+                    <span><i class="dot danger"></i>危险品</span>
+                    <span><i class="dot reefer"></i>冷藏箱</span>
+                    <span><i class="dot special"></i>危险品+冷藏</span>
+                    <span><i class="dot blank"></i>空位</span>
+                </div>
+                <div class="yard-map-container">
+                    <canvas id="yardCanvas" @click="handleCanvasClick"></canvas>
+                </div>
+                <div v-if="selectedContainerOnMap" class="selected-box">
+                    <strong>选中集装箱：</strong>
+                    {{ selectedContainerOnMap.containerNo }} · {{ selectedContainerOnMap.yard }}/{{ selectedContainerOnMap.zone }}/列{{ selectedContainerOnMap.row }}/层{{ selectedContainerOnMap.tier }}
+                </div>
+            </section>
+        </main>
+
+        <div class="modal-overlay" v-if="showAllocModal" @click.self="showAllocModal = false">
+            <section class="modal">
+                <h2>智能堆位分配</h2>
+                <div class="form-grid">
+                    <label>箱型<select v-model="allocForm.containerType"><option>20GP</option><option>40HQ</option><option>40GP</option></select></label>
+                    <label>装载状态<select v-model="allocForm.loadStatus"><option>重箱</option><option>空箱</option></select></label>
+                    <label>目标用途<select v-model="allocForm.targetType"><option value="auto">自动判断</option><option value="进口箱">进口箱</option><option value="出口箱">出口箱</option><option value="冷藏箱">冷藏箱</option></select></label>
+                    <label>优先区域<select v-model="allocForm.preferZone"><option value="">无偏好</option><option v-for="z in zoneList" :key="z" :value="z">{{ z }}</option></select></label>
+                </div>
+                <div class="check-grid">
+                    <label><input type="checkbox" v-model="allocForm.isDangerous"> 危险品</label>
+                    <label><input type="checkbox" v-model="allocForm.isReefer"> 冷藏箱</label>
+                </div>
+                <button class="btn btn-primary" @click="runSmartAllocation">分析推荐堆位</button>
+                <div class="recommend-list" v-if="allocationResults.length">
+                    <article v-for="(rec, idx) in allocationResults" :key="idx" class="recommend-item">
+                        <div>
+                            <strong>{{ rec.yard }} / {{ rec.zone }}</strong>
+                            <span>列{{ rec.row }} 层{{ rec.tier }} · 得分 {{ rec.score.toFixed(1) }}</span>
+                            <small>{{ rec.reason }}</small>
+                        </div>
+                        <button class="btn btn-primary btn-sm" @click="applyAllocation(rec)">采用</button>
+                    </article>
+                </div>
+                <p v-if="allocationSearched && allocationResults.length === 0" class="empty-note">未找到符合条件的空位。</p>
+                <div class="modal-actions">
+                    <button class="btn btn-outline" @click="showAllocModal = false">关闭</button>
+                </div>
+            </section>
+        </div>
+
+        <div class="modal-overlay" v-if="showYardModal" @click.self="showYardModal = false">
+            <form class="modal" @submit.prevent="saveYard">
+                <h2>{{ editingYardId ? '编辑堆场' : '新增堆场' }}</h2>
+                <div class="form-grid">
+                    <label>堆场名称<input v-model.trim="yardForm.yardName" required></label>
+                    <label>堆场用途<input v-model.trim="yardForm.usageType" placeholder="进口箱 / 出口箱 / 冷藏箱"></label>
+                    <label>总容量<input type="number" v-model.number="yardForm.totalCapacity" min="1" required></label>
+                    <label>堆场编号<input v-model.trim="yardForm.code" placeholder="Y004"></label>
+                    <label>地址<input v-model.trim="yardForm.address"></label>
+                    <label>负责人<input v-model.trim="yardForm.manager"></label>
+                    <label>联系电话<input v-model.trim="yardForm.contactPhone"></label>
+                    <label>状态
+                        <select v-model="yardForm.status">
+                            <option value="active">启用</option>
+                            <option value="disabled">停用</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-outline" @click="showYardModal = false">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <script src="../js/auth-guard.js"></script>
+    <script src="../js/yard-management.js"></script>
+</body>
+</html>

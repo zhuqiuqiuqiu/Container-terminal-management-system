@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTMS · 集装箱管理</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+</head>
+<body data-auth-page="container">
+    <div id="app" class="module-shell">
+        <header class="app-header">
+            <a class="back-link" href="../index.html">← 返回主页</a>
+            <div>
+                <h1>集装箱管理</h1>
+                <p>集装箱基础信息、堆场位置与状态流转维护</p>
+            </div>
+            <span class="time-display">{{ currentTime }}</span>
+        </header>
+
+        <main class="main-content">
+            <section class="toolbar">
+                <input type="text" v-model="searchQuery" placeholder="搜索箱号">
+                <select v-model="filterStatus">
+                    <option value="">全部状态</option>
+                    <option v-for="s in allStatuses" :key="s" :value="s">{{ s }}</option>
+                </select>
+                <select v-model="filterType">
+                    <option value="">全部箱型</option>
+                    <option value="20GP">20GP</option>
+                    <option value="40HQ">40HQ</option>
+                    <option value="40GP">40GP</option>
+                </select>
+                <select v-model="filterLoad">
+                    <option value="">全部装载</option>
+                    <option value="重箱">重箱</option>
+                    <option value="空箱">空箱</option>
+                </select>
+                <label class="checkline"><input type="checkbox" v-model="filterDangerous"> 危险品</label>
+                <label class="checkline"><input type="checkbox" v-model="filterReefer"> 冷藏箱</label>
+                <button class="btn btn-outline" @click="resetFilters">重置</button>
+                <button class="btn btn-primary push-right" @click="openAddModal">新增集装箱</button>
+            </section>
+
+            <section class="card">
+                <div class="card-header">
+                    <strong>集装箱列表</strong>
+                    <span>共 {{ filteredContainers.length }} 条</span>
+                </div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>箱号</th>
+                                <th>箱型</th>
+                                <th>装载</th>
+                                <th>状态</th>
+                                <th>堆场</th>
+                                <th>区</th>
+                                <th>列</th>
+                                <th>层</th>
+                                <th>危险品</th>
+                                <th>冷藏</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="c in paginatedContainers" :key="c.id">
+                                <td><strong>{{ c.containerNo }}</strong></td>
+                                <td><span class="tag tag-blue">{{ c.containerType }}</span></td>
+                                <td><span :class="c.loadStatus === '重箱' ? 'tag tag-orange' : 'tag tag-gray'">{{ c.loadStatus }}</span></td>
+                                <td><span :class="getStatusTagClass(c.status)">{{ c.status }}</span></td>
+                                <td>{{ c.yard || '-' }}</td>
+                                <td>{{ c.zone || '-' }}</td>
+                                <td>{{ c.row || '-' }}</td>
+                                <td>{{ c.tier || '-' }}</td>
+                                <td>{{ c.isDangerous ? '是' : '否' }}</td>
+                                <td>{{ c.isReefer ? '是' : '否' }}</td>
+                                <td class="actions">
+                                    <button class="btn btn-outline btn-sm" @click="openDetailModal(c)">编辑</button>
+                                    <button class="btn btn-primary btn-sm" @click="advanceStatus(c)">流转</button>
+                                </td>
+                            </tr>
+                            <tr v-if="paginatedContainers.length === 0">
+                                <td colspan="11" class="empty-cell">暂无集装箱数据</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pager">
+                    <span>第 {{ currentPageNum }} / {{ totalPages }} 页</span>
+                    <div>
+                        <button class="btn btn-outline btn-sm" :disabled="currentPageNum <= 1" @click="currentPageNum--">上一页</button>
+                        <button class="btn btn-outline btn-sm" :disabled="currentPageNum >= totalPages" @click="currentPageNum++">下一页</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <div class="modal-overlay" v-if="showModal" @click.self="showModal = false">
+            <form class="modal" @submit.prevent="saveContainer">
+                <h2>{{ modalTitle }}</h2>
+                <div class="form-grid">
+                    <label>箱号<input v-model.trim="formData.containerNo" required></label>
+                    <label>箱型<select v-model="formData.containerType"><option>20GP</option><option>40HQ</option><option>40GP</option></select></label>
+                    <label>装载状态<select v-model="formData.loadStatus"><option>重箱</option><option>空箱</option></select></label>
+                    <label>状态<select v-model="formData.status"><option v-for="s in allStatuses" :key="s" :value="s">{{ s }}</option></select></label>
+                    <label>堆场<select v-model="formData.yard"><option v-for="y in yardList" :key="y" :value="y">{{ y }}</option></select></label>
+                    <label>区<select v-model="formData.zone"><option v-for="z in zoneList" :key="z" :value="z">{{ z }}</option></select></label>
+                    <label>列<input type="number" v-model.number="formData.row" min="1"></label>
+                    <label>层<input type="number" v-model.number="formData.tier" min="1"></label>
+                </div>
+                <div class="check-grid">
+                    <label><input type="checkbox" v-model="formData.isDangerous"> 危险品</label>
+                    <label><input type="checkbox" v-model="formData.isReefer"> 冷藏箱</label>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-outline" @click="showModal = false">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                    <button v-if="isEditing" type="button" class="btn btn-danger" @click="deleteContainer">删除</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <script src="../js/auth-guard.js"></script>
+    <script src="../js/container-management.js"></script>
+</body>
+</html>

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智慧堆场 · 首页</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body data-auth-page="home">
+    <div class="home-dashboard">
+        <aside class="home-sidebar">
+            <div class="home-logo">
+                <div class="home-logo-icon">⚓</div>
+                <div>
+                    <div class="home-logo-title">智港堆场</div>
+                    <div class="home-logo-subtitle">CTMS</div>
+                </div>
+            </div>
+
+            <nav class="home-nav" aria-label="系统导航">
+                <a class="home-nav-item active" href="index.html">
+                    <span class="home-nav-icon">🏠</span>
+                    <span>首页大屏</span>
+                </a>
+                <a class="home-nav-item" href="pages/container-management.html">
+                    <span class="home-nav-icon">📦</span>
+                    <span>集装箱管理</span>
+                </a>
+                <a class="home-nav-item" href="pages/yard-management.html">
+                    <span class="home-nav-icon">🗺️</span>
+                    <span>堆场管理</span>
+                </a>
+                <a class="home-nav-item" href="pages/ship-plan-management.html">
+                    <span class="home-nav-icon">🚢</span>
+                    <span>船舶计划管理</span>
+                </a>
+                <a class="home-nav-item" href="pages/terminal-operations.html">
+                    <span class="home-nav-icon">🛠️</span>
+                    <span>码头作业模块</span>
+                </a>
+            </nav>
+
+            <div class="home-user">
+                <div class="home-user-avatar">管</div>
+                <div>
+                    <div id="homeUserName" class="home-user-name">admin</div>
+                    <div id="homeUserRole" class="home-user-role">超级管理员</div>
+                </div>
+                <button id="logoutBtn" class="btn btn-outline btn-sm" style="margin-left:auto;">退出</button>
+            </div>
+        </aside>
+
+        <header class="home-topbar">
+            <div>
+                <h1>首页综合大屏</h1>
+                <p>集装箱码头堆场管理系统 · 模块导航入口</p>
+            </div>
+            <div class="home-status">
+                <span class="online-dot"></span>
+                系统在线
+            </div>
+        </header>
+
+        <main class="home-main">
+            <section class="home-stat-grid" id="homeStatGrid">
+                <article class="home-stat-card">
+                    <span>集装箱总数</span>
+                    <strong id="statContainerTotal">-</strong>
+                    <small>数据库 container 表</small>
+                </article>
+                <article class="home-stat-card">
+                    <span>堆场利用率</span>
+                    <strong id="statYardUsage">-</strong>
+                    <small id="statYardCapacity">容量统计</small>
+                </article>
+                <article class="home-stat-card">
+                    <span>当前靠泊船舶</span>
+                    <strong id="statBerthedShips">-</strong>
+                    <small>来自船舶计划</small>
+                </article>
+                <article class="home-stat-card">
+                    <span>进行中任务</span>
+                    <strong id="statRunningTasks">-</strong>
+                    <small>来自码头作业模块</small>
+                </article>
+            </section>
+
+            <section class="home-visual-grid">
+                <article class="home-chart-card">
+                    <div class="home-section-title">任务状态分布</div>
+                    <canvas id="taskStatusChart" class="home-chart-canvas"></canvas>
+                </article>
+                <article class="home-chart-card">
+                    <div class="home-section-title">船舶状态分布</div>
+                    <canvas id="shipStatusChart" class="home-chart-canvas"></canvas>
+                </article>
+                <article class="home-chart-card wide">
+                    <div class="home-section-title">堆场利用率排行</div>
+                    <div id="yardUsageRank" class="home-rank-list"></div>
+                </article>
+            </section>
+
+            <section class="home-map-card">
+                <div class="home-map-head">
+                    <div>
+                        <div class="home-section-title">码头全局展示</div>
+                        <div class="home-map-subtitle">船舶靠泊、码头作业、堆场分区一体化视图</div>
+                    </div>
+                    <div class="home-map-badges">
+                        <span class="home-badge">实时概览</span>
+                        <span class="home-badge home-badge-soft">地图联动</span>
+                    </div>
+                </div>
+                <div class="home-terminal-map-wrap">
+                    <canvas id="homeTerminalMap" class="home-terminal-map" aria-label="码头全局展示地图"></canvas>
+                    <div class="home-map-tooltip" id="homeTerminalMapTooltip" hidden></div>
+                </div>
+                <div class="home-map-legend">
+                    <span><i class="legend-dot legend-empty"></i> 空位</span>
+                    <span><i class="legend-dot legend-wait"></i> 待作业</span>
+                    <span><i class="legend-dot legend-run"></i> 进行中</span>
+                    <span><i class="legend-dot legend-done"></i> 已完成</span>
+                    <span><i class="legend-dot legend-ship"></i> 船舶 / 泊位</span>
+                </div>
+            </section>
+        </main>
+
+    </div>
+    <script src="js/auth-guard.js"></script>
+    <script src="js/home.js"></script>
+    <script src="js/home-dashboard.js"></script>
+    <script src="js/home-terminal-map.js"></script>
+</body>
+</html>

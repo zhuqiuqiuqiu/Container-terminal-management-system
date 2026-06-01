@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTMS · 登录</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="login-page">
+    <main class="login-shell">
+        <section class="login-card">
+            <div class="login-brand">
+                <div class="brand-mark">CTMS</div>
+                <div>
+                    <h1>集装箱码头堆场管理系统</h1>
+                    <p>请使用数据库中的账号登录后进入首页</p>
+                </div>
+            </div>
+            <form id="loginForm" class="login-form">
+                <label>
+                    用户名
+                    <input id="username" name="username" type="text" autocomplete="username" placeholder="admin01" required>
+                </label>
+                <label>
+                    密码
+                    <input id="password" name="password" type="password" autocomplete="current-password" placeholder="admin123" required>
+                </label>
+                <button type="submit" class="btn btn-primary login-btn">登录</button>
+                <div id="loginMessage" class="login-message"></div>
+            </form>
+            <div class="login-tips">
+                可用账号示例：<code>admin01 / admin123</code>、<code>dispatcher01 / disp123</code>、<code>operator01 / op123</code>
+            </div>
+        </section>
+    </main>
+    <script src="js/login.js"></script>
+</body>
+</html>

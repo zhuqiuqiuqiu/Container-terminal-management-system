@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTMS · 码头作业模块</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+</head>
+<body data-auth-page="terminal-operations">
+    <div id="app" class="module-shell operations-shell">
+        <header class="app-header">
+            <a class="back-link" href="../index.html">← 返回主页</a>
+            <div>
+                <h1>码头作业模块</h1>
+                <p>作业单管理、任务流转与现场状态监控</p>
+            </div>
+            <span class="time-display">{{ currentTime }}</span>
+        </header>
+
+        <main class="main-content operations-content">
+            <section class="ship-tabs">
+                <button class="tab-btn" :class="{ active: activeTab === 'dashboard' }" @click="activeTab = 'dashboard'">作业大屏</button>
+                <button class="tab-btn" :class="{ active: activeTab === 'tasks' }" @click="activeTab = 'tasks'">作业单管理</button>
+                <button class="tab-btn" :class="{ active: activeTab === 'status' }" @click="activeTab = 'status'">任务状态</button>
+            </section>
+
+            <section v-if="activeTab === 'dashboard'" class="operations-dashboard">
+                <div class="operations-kpis">
+                    <article class="operation-kpi">
+                        <span>作业单总数</span>
+                        <strong>{{ tasks.length }}</strong>
+                        <small>当前排程总量</small>
+                    </article>
+                    <article class="operation-kpi">
+                        <span>进行中</span>
+                        <strong>{{ statusCounts.inProgress }}</strong>
+                        <small>正在执行任务</small>
+                    </article>
+                    <article class="operation-kpi">
+                        <span>已完成</span>
+                        <strong>{{ statusCounts.completed }}</strong>
+                        <small>完成率 {{ completionRate }}%</small>
+                    </article>
+                    <article class="operation-kpi">
+                        <span>未开始</span>
+                        <strong>{{ statusCounts.pending }}</strong>
+                        <small>等待调度任务</small>
+                    </article>
+                </div>
+
+                <div class="operations-grid">
+                    <section class="card">
+                        <div class="card-header">
+                            <strong>任务完成进度</strong>
+                            <span>{{ statusCounts.completed }} / {{ tasks.length }}</span>
+                        </div>
+                        <div class="progress-bar-wrap">
+                            <div class="progress-bar-fill" :style="{ width: completionRate + '%' }"></div>
+                        </div>
+                        <div class="operation-progress-meta">
+                            <span>未开始 {{ statusCounts.pending }}</span>
+                            <span>进行中 {{ statusCounts.inProgress }}</span>
+                            <span>已完成 {{ statusCounts.completed }}</span>
+                        </div>
+                    </section>
+
+                    <section class="card">
+                        <div class="card-header">
+                            <strong>堆场占用概览</strong>
+                            <span>按作业单箱位统计</span>
+                        </div>
+                        <div class="yard-usage-list">
+                            <div v-for="yard in yardSummary" :key="yard.name" class="yard-usage-row">
+                                <div>
+                                    <strong>{{ yard.name }}</strong>
+                                    <small>{{ yard.used }} / {{ yard.total }} 箱位</small>
+                                </div>
+                                <div class="progress-bar-wrap slim">
+                                    <div class="progress-bar-fill" :class="{ warning: yard.usage > 70 }" :style="{ width: yard.usage + '%' }"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+
+                <section class="card">
+                    <div class="card-header">
+                        <strong>实时作业动态</strong>
+                        <span>最近更新</span>
+                    </div>
+                    <div class="operation-feed">
+                        <div v-for="task in recentTasks" :key="task.id" class="operation-feed-row">
+                            <span :class="'status-dot ' + task.status"></span>
+                            <div>
+                                <strong>{{ task.taskName }}</strong>
+                                <small>{{ task.containerId }} · {{ task.origin }} → {{ task.destination }}</small>
+                            </div>
+                            <span :class="'status-badge status-' + task.status">{{ statusLabel(task.status) }}</span>
+                            <time>{{ formatTime(task.updatedAt) }}</time>
+                        </div>
+                    </div>
+                </section>
+            </section>
+
+            <section v-if="activeTab === 'tasks'" class="card">
+                <div class="card-header">
+                    <div>
+                        <strong>作业单管理</strong>
+                        <span>共 {{ filteredTasks.length }} 条</span>
+                    </div>
+                    <button class="btn btn-primary" @click="openTaskForm()">新建作业单</button>
+                </div>
+                <div class="toolbar compact-toolbar">
+                    <button class="btn btn-sm" :class="filterStatus === 'all' ? 'btn-primary' : 'btn-outline'" @click="filterStatus = 'all'">全部</button>
+                    <button class="btn btn-sm" :class="filterStatus === 'pending' ? 'btn-primary' : 'btn-outline'" @click="filterStatus = 'pending'">未开始</button>
+                    <button class="btn btn-sm" :class="filterStatus === 'in-progress' ? 'btn-primary' : 'btn-outline'" @click="filterStatus = 'in-progress'">进行中</button>
+                    <button class="btn btn-sm" :class="filterStatus === 'completed' ? 'btn-primary' : 'btn-outline'" @click="filterStatus = 'completed'">已完成</button>
+                    <input class="push-right" v-model.trim="searchQuery" placeholder="搜索任务、箱号或位置">
+                </div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>任务编号</th>
+                                <th>任务名称</th>
+                                <th>箱号</th>
+                                <th>起始位置</th>
+                                <th>目标位置</th>
+                                <th>目标箱位</th>
+                                <th>状态</th>
+                                <th>更新时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="task in filteredTasks" :key="task.id">
+                                <td class="text-mono">{{ task.id }}</td>
+                                <td><strong>{{ task.taskName }}</strong></td>
+                                <td class="text-mono">{{ task.containerId }}</td>
+                                <td>{{ task.origin }}</td>
+                                <td>{{ task.destination }}</td>
+                                <td>{{ task.yardSlot || '-' }}</td>
+                                <td><span :class="'status-badge status-' + task.status">{{ statusLabel(task.status) }}</span></td>
+                                <td>{{ formatTime(task.updatedAt) }}</td>
+                                <td class="actions">
+                                    <button class="btn btn-outline btn-sm" @click="openTaskForm(task)">编辑</button>
+                                    <button class="btn btn-primary btn-sm" :disabled="task.status === 'completed'" @click="advanceStatus(task)">{{ nextActionLabel(task.status) }}</button>
+                                    <button class="btn btn-danger btn-sm" @click="deleteTask(task.id)">删除</button>
+                                </td>
+                            </tr>
+                            <tr v-if="filteredTasks.length === 0">
+                                <td colspan="9" class="empty-cell">暂无作业单数据</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section v-if="activeTab === 'status'" class="operations-dashboard">
+                <div class="operations-kpis three">
+                    <article class="operation-kpi">
+                        <span>未开始</span>
+                        <strong>{{ statusCounts.pending }}</strong>
+                        <small>等待确认</small>
+                    </article>
+                    <article class="operation-kpi">
+                        <span>进行中</span>
+                        <strong>{{ statusCounts.inProgress }}</strong>
+                        <small>设备执行</small>
+                    </article>
+                    <article class="operation-kpi">
+                        <span>已完成</span>
+                        <strong>{{ statusCounts.completed }}</strong>
+                        <small>作业闭环</small>
+                    </article>
+                </div>
+                <section class="card">
+                    <div class="card-header">
+                        <strong>任务状态监控</strong>
+                        <span>自动模拟流转，每 3 秒刷新</span>
+                    </div>
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>编号</th>
+                                    <th>任务</th>
+                                    <th>箱号</th>
+                                    <th>来源</th>
+                                    <th>目的地</th>
+                                    <th>状态</th>
+                                    <th>更新时间</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="task in tasks" :key="task.id">
+                                    <td class="text-mono">{{ task.id }}</td>
+                                    <td><strong>{{ task.taskName }}</strong></td>
+                                    <td class="text-mono">{{ task.containerId }}</td>
+                                    <td>{{ task.origin }}</td>
+                                    <td>{{ task.destination }}</td>
+                                    <td><span :class="'status-badge status-' + task.status">{{ statusLabel(task.status) }}</span></td>
+                                    <td>{{ formatTime(task.updatedAt) }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </section>
+        </main>
+
+        <div class="modal-overlay" v-if="showTaskForm" @click.self="closeTaskForm">
+            <form class="modal" @submit.prevent="saveTask">
+                <h2>{{ editingTask ? '编辑作业单' : '新建作业单' }}</h2>
+                <div class="form-grid">
+                    <label>任务名称<input v-model.trim="formData.taskName" placeholder="例如：把 A 箱从船卸到 Yard B" required></label>
+                    <label>箱号<input v-model.trim="formData.containerId" placeholder="例如：CONT-A001" required></label>
+                    <label>起始位置
+                        <select v-model="formData.origin">
+                            <option v-for="origin in origins" :key="origin" :value="origin">{{ origin }}</option>
+                        </select>
+                    </label>
+                    <label>目标位置
+                        <select v-model="formData.destination">
+                            <option v-for="destination in destinations" :key="destination" :value="destination">{{ destination }}</option>
+                        </select>
+                    </label>
+                    <label>目标箱位<input v-model.trim="formData.yardSlot" placeholder="例如：B-03"></label>
+                    <label>状态
+                        <select v-model="formData.status">
+                            <option value="pending">未开始</option>
+                            <option value="in-progress">进行中</option>
+                            <option value="completed">已完成</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-outline" @click="closeTaskForm">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <script src="../js/auth-guard.js"></script>
+    <script src="../js/terminal-operations.js"></script>
+</body>
+</html>

@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTMS · 船舶计划管理</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+</head>
+<body data-auth-page="ship">
+    <div id="app" class="module-shell ship-shell">
+        <header class="app-header ship-header">
+            <a class="back-link" href="../index.html">← 返回主页</a>
+            <div>
+                <h1>船舶计划管理</h1>
+                <p>船舶信息管理、靠泊计划、装卸计划三类业务合并为一个子页面</p>
+            </div>
+            <span class="time-display">{{ currentTime }}</span>
+        </header>
+
+        <main class="main-content ship-content">
+            <section class="ship-tabs">
+                <button class="tab-btn" :class="{ active: currentView === 'ships' }" @click="currentView = 'ships'">船舶信息管理</button>
+                <button class="tab-btn" :class="{ active: currentView === 'berthing' }" @click="currentView = 'berthing'">靠泊计划</button>
+                <button class="tab-btn" :class="{ active: currentView === 'loading' }" @click="currentView = 'loading'">装卸计划</button>
+            </section>
+
+            <section v-if="currentView === 'ships'" class="card">
+                <div class="card-header">
+                    <strong>船舶信息管理</strong>
+                    <button class="btn btn-primary" @click="openShipDialog()">新增船舶</button>
+                </div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>船名</th>
+                                <th>航次</th>
+                                <th>ETA</th>
+                                <th>ETD</th>
+                                <th>泊位</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="ship in ships" :key="ship.id">
+                                <td>{{ ship.id }}</td>
+                                <td><strong>{{ ship.name }}</strong></td>
+                                <td>{{ ship.voyage }}</td>
+                                <td>{{ ship.eta }}</td>
+                                <td>{{ ship.etd }}</td>
+                                <td>{{ ship.berth }}</td>
+                                <td><span class="tag" :class="statusClass(ship.status)">{{ ship.status }}</span></td>
+                                <td class="actions">
+                                    <button class="btn btn-outline btn-sm" @click="openShipDialog(ship)">编辑</button>
+                                    <button class="btn btn-danger btn-sm" @click="deleteShip(ship.id)">删除</button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section v-if="currentView === 'berthing'" class="grid-two">
+                <article class="card">
+                    <div class="card-header">
+                        <strong>泊位状态</strong>
+                        <div class="ship-berth-actions">
+                            <button class="btn btn-primary" @click="autoGenerateBerthingPlans">自动生成靠泊计划</button>
+                            <button class="btn btn-outline" @click="openBerthingDialog">新增靠泊计划</button>
+                        </div>
+                    </div>
+                    <div v-if="autoBerthMessage" class="auto-berth-message">{{ autoBerthMessage }}</div>
+                    <div class="berth-grid">
+                        <div v-for="berth in berths" :key="berth.id" class="berth-card" :class="{ occupied: berth.occupied }">
+                            <div class="berth-name">{{ berth.name }}</div>
+                            <div class="berth-meta">{{ berth.occupied ? `占用中 · ${berth.currentShip}` : '空闲' }}</div>
+                            <div class="berth-meta">水深 {{ berth.depth }}m · 长度 {{ berth.length }}m</div>
+                        </div>
+                    </div>
+                </article>
+                <article class="card">
+                    <div class="card-header"><strong>靠泊计划列表</strong></div>
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>船名</th>
+                                    <th>泊位</th>
+                                    <th>靠泊</th>
+                                    <th>离泊</th>
+                                    <th>时长</th>
+                                    <th>状态</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="plan in berthingPlans" :key="plan.id">
+                                    <td>{{ plan.shipName }}</td>
+                                    <td>{{ plan.berthName }}</td>
+                                    <td>{{ plan.startTime }}</td>
+                                    <td>{{ plan.endTime }}</td>
+                                    <td>{{ plan.duration }}</td>
+                                    <td><span class="tag" :class="plan.status === '进行中' ? 'tag-green' : plan.status === '待靠泊' ? 'tag-orange' : 'tag-gray'">{{ plan.status }}</span></td>
+                                    <td class="actions">
+                                        <button class="btn btn-danger btn-sm" @click="deleteBerthingPlan(plan.id)">取消</button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+            </section>
+
+            <section v-if="currentView === 'loading'" class="loading-layout">
+                <article class="card">
+                    <div class="card-header"><strong>装卸计划概览</strong></div>
+                    <div class="loading-kpis">
+                        <div class="loading-kpi"><span>计划装船</span><strong>{{ totalLoadPlanned }} TEU</strong></div>
+                        <div class="loading-kpi"><span>计划卸船</span><strong>{{ totalDischargePlanned }} TEU</strong></div>
+                        <div class="loading-kpi"><span>已完成</span><strong>{{ totalCompleted }} TEU</strong></div>
+                        <div class="loading-kpi"><span>待作业</span><strong>{{ totalPending }} TEU</strong></div>
+                    </div>
+                </article>
+                <article class="card chart-card">
+                    <div class="chart-box" id="loadPieChart"></div>
+                </article>
+                <article class="card chart-card">
+                    <div class="chart-box" id="loadBarChart"></div>
+                </article>
+                <article class="card">
+                    <div class="card-header"><strong>装卸明细</strong></div>
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>船名</th>
+                                    <th>装船</th>
+                                    <th>卸船</th>
+                                    <th>已完成</th>
+                                    <th>进度</th>
+                                    <th>岸桥</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="item in loadingPlans" :key="item.id">
+                                    <td>{{ item.shipName }}</td>
+                                    <td>{{ item.loadQty }}</td>
+                                    <td>{{ item.dischargeQty }}</td>
+                                    <td>{{ item.completedQty }}</td>
+                                    <td>{{ item.progressPercent }}%</td>
+                                    <td>{{ item.craneAssigned }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+            </section>
+        </main>
+
+        <div class="modal-overlay" v-if="showShipDialog" @click.self="showShipDialog = false">
+            <form class="modal" @submit.prevent="saveShip">
+                <h2>{{ editingShipId ? '编辑船舶信息' : '新增船舶' }}</h2>
+                <div class="form-grid">
+                    <label>船名<input v-model.trim="shipForm.name" required></label>
+                    <label>航次<input v-model.trim="shipForm.voyage" required></label>
+                    <label>ETA<input v-model.trim="shipForm.eta" placeholder="2026-06-03 08:00"></label>
+                    <label>ETD<input v-model.trim="shipForm.etd" placeholder="2026-06-05 18:00"></label>
+                    <label>泊位<input v-model.trim="shipForm.berth" placeholder="B01"></label>
+                    <label>状态
+                        <select v-model="shipForm.status">
+                            <option value="计划中">计划中</option>
+                            <option value="已靠泊">已靠泊</option>
+                            <option value="已离港">已离港</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-outline" @click="showShipDialog = false">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="modal-overlay" v-if="showBerthingDialog" @click.self="showBerthingDialog = false">
+            <form class="modal" @submit.prevent="saveBerthingPlan">
+                <h2>新增靠泊计划</h2>
+                <div class="form-grid">
+                    <label>船舶
+                        <select v-model="berthingForm.shipId" required>
+                            <option value="">请选择</option>
+                            <option v-for="ship in ships" :key="ship.id" :value="ship.id">{{ ship.name }} / {{ ship.voyage }}</option>
+                        </select>
+                    </label>
+                    <label>泊位
+                        <select v-model="berthingForm.berthName" required>
+                            <option value="">请选择</option>
+                            <option v-for="berth in berths" :key="berth.id" :value="berth.name" :disabled="berth.occupied">{{ berth.name }}</option>
+                        </select>
+                    </label>
+                    <label>靠泊时间<input v-model.trim="berthingForm.startTime" required></label>
+                    <label>离泊时间<input v-model.trim="berthingForm.endTime" required></label>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-outline" @click="showBerthingDialog = false">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="../js/auth-guard.js"></script>
+    <script src="../js/ship-plan-management.js"></script>
+</body>
+</html>
