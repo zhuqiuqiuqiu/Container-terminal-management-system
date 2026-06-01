@@ -1,6 +1,6 @@
+from datetime import datetime
 from pathlib import Path
 import sys
-from datetime import datetime
 
 from flask import Flask, jsonify, redirect, request, send_from_directory, session, url_for
 from sqlalchemy import text
@@ -15,6 +15,11 @@ from routes.container_route import container_bp
 from routes.ship_route import ship_bp
 from routes.task_route import task_bp
 from routes.yard_route import yard_bp
+
+
+STATUS_SCHEDULED = '\u8ba1\u5212\u4e2d'
+STATUS_BERTHED = '\u5df2\u9760\u6cca'
+STATUS_DEPARTED = '\u5df2\u79bb\u6e2f'
 
 
 def create_app():
@@ -152,14 +157,14 @@ def create_app():
         yard_total = sum(yard.total_capacity for yard in yards)
         yard_used = sum(yard.used_capacity() for yard in yards)
         task_counts = {
-            "pending": sum(1 for task in tasks if task.status in ('pending', '未开始')),
-            "inProgress": sum(1 for task in tasks if task.status in ('in-progress', 'processing', '进行中')),
-            "completed": sum(1 for task in tasks if task.status in ('completed', '已完成')),
+            "pending": sum(1 for task in tasks if task.status in ('pending', '\u672a\u5f00\u59cb')),
+            "inProgress": sum(1 for task in tasks if task.status in ('in-progress', 'processing', '\u8fdb\u884c\u4e2d')),
+            "completed": sum(1 for task in tasks if task.status in ('completed', '\u5df2\u5b8c\u6210')),
         }
         ship_counts = {
-            "berthed": sum(1 for ship in ships if ship.status == '已靠泊'),
-            "scheduled": sum(1 for ship in ships if ship.status == '计划中'),
-            "departed": sum(1 for ship in ships if ship.status == '已离港'),
+            "berthed": sum(1 for ship in ships if ship.status == STATUS_BERTHED),
+            "scheduled": sum(1 for ship in ships if ship.status == STATUS_SCHEDULED),
+            "departed": sum(1 for ship in ships if ship.status == STATUS_DEPARTED),
         }
 
         return jsonify({
@@ -176,7 +181,7 @@ def create_app():
             },
             "taskStatus": task_counts,
             "shipStatus": ship_counts,
-            "containerTypes": _count_by(containers, lambda item: item.container_type or '未知'),
+            "containerTypes": _count_by(containers, lambda item: item.container_type or '\u672a\u77e5'),
             "yardUsage": [
                 {
                     "name": yard.yard_name,
@@ -208,7 +213,7 @@ def seed_data():
 
     if Ship.query.first():
         for ship in Ship.query.filter((Ship.status == None) | (Ship.status == '')).all():
-            ship.status = '已靠泊' if ship.berth else '计划中'
+            ship.status = STATUS_BERTHED if ship.berth else STATUS_SCHEDULED
         db.session.commit()
 
     if Container.query.first() is None:
@@ -221,7 +226,7 @@ def seed_data():
                 area='Zone-1',
                 column=3,
                 layer=2,
-                status='\u5806\u573a\u5b58\u50a8'
+                status='\u5806\u573a\u5b58\u50a8',
             ),
             Container(
                 container_no='CMAU9876543',
@@ -232,7 +237,7 @@ def seed_data():
                 area='Zone-1',
                 column=3,
                 layer=1,
-                status='\u5806\u573a\u5b58\u50a8'
+                status='\u5806\u573a\u5b58\u50a8',
             ),
             Container(
                 container_no='OOLU4567890',
@@ -241,7 +246,7 @@ def seed_data():
                 area='Zone-3',
                 column=7,
                 layer=1,
-                status='\u7b49\u5f85\u63d0\u7bb1'
+                status='\u7b49\u5f85\u63d0\u7bb1',
             ),
         ]
         db.session.add_all(test_data)
@@ -252,12 +257,12 @@ def seed_data():
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         db.session.add(Task(
             task_no='TSK-SEED-001',
-            task_type='集装箱卸船入堆',
+            task_type='\u96c6\u88c5\u7bb1\u5378\u8239\u5165\u5806',
             container_id=first_container.id if first_container else None,
-            from_pos='泊位1',
-            to_pos='重箱堆场A',
+            from_pos='\u6cca\u4f4d1',
+            to_pos='\u5806\u573aA',
             status='pending',
-            remark='A区-01',
+            remark='Zone-1/3/2',
             created_at=now,
             updated_at=now,
         ))
@@ -265,18 +270,16 @@ def seed_data():
 
 
 def ensure_ship_schema():
-    """为旧数据库补齐 ship 表里缺失的 status 字段。"""
     try:
         columns = {row[1] for row in db.session.execute(text("PRAGMA table_info(ship)")).fetchall()}
         if 'status' not in columns:
-            db.session.execute(text("ALTER TABLE ship ADD COLUMN status TEXT DEFAULT '计划中'"))
+            db.session.execute(text("ALTER TABLE ship ADD COLUMN status TEXT DEFAULT '\u8ba1\u5212\u4e2d'"))
             db.session.commit()
     except Exception:
         db.session.rollback()
 
 
 def ensure_task_schema():
-    """旧数据库已有 task 表；这里仅确保字段存在后再让模型使用。"""
     try:
         columns = {row[1] for row in db.session.execute(text("PRAGMA table_info(task)")).fetchall()}
         if not columns:
@@ -289,6 +292,14 @@ def ensure_task_schema():
             db.session.execute(text("ALTER TABLE task ADD COLUMN created_at TEXT"))
         if 'updated_at' not in columns:
             db.session.execute(text("ALTER TABLE task ADD COLUMN updated_at TEXT"))
+        if 'estimated_time' not in columns:
+            db.session.execute(text("ALTER TABLE task ADD COLUMN estimated_time INTEGER"))
+        if 'actual_time' not in columns:
+            db.session.execute(text("ALTER TABLE task ADD COLUMN actual_time INTEGER"))
+        if 'start_time' not in columns:
+            db.session.execute(text("ALTER TABLE task ADD COLUMN start_time TEXT"))
+        if 'end_time' not in columns:
+            db.session.execute(text("ALTER TABLE task ADD COLUMN end_time TEXT"))
         db.session.commit()
     except Exception:
         db.session.rollback()

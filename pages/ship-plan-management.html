@@ -14,17 +14,21 @@
             <a class="back-link" href="../index.html">← 返回主页</a>
             <div>
                 <h1>船舶计划管理</h1>
-                <p>船舶信息管理、靠泊计划、装卸计划三类业务合并为一个子页面</p>
+                <p>船舶信息、靠泊计划、装卸计划和整船自动作业流</p>
             </div>
             <span class="time-display">{{ currentTime }}</span>
         </header>
 
         <main class="main-content ship-content">
             <section class="ship-tabs">
-                <button class="tab-btn" :class="{ active: currentView === 'ships' }" @click="currentView = 'ships'">船舶信息管理</button>
+                <button class="tab-btn" :class="{ active: currentView === 'ships' }" @click="currentView = 'ships'">船舶信息</button>
                 <button class="tab-btn" :class="{ active: currentView === 'berthing' }" @click="currentView = 'berthing'">靠泊计划</button>
                 <button class="tab-btn" :class="{ active: currentView === 'loading' }" @click="currentView = 'loading'">装卸计划</button>
+                <button class="tab-btn" :class="{ active: currentView === 'import' }" @click="currentView = 'import'">任务导入</button>
+                <button class="tab-btn" :class="{ active: currentView === 'workflow' }" @click="currentView = 'workflow'">完整工作流</button>
             </section>
+
+            <section v-if="message" class="auto-berth-message">{{ message }}</section>
 
             <section v-if="currentView === 'ships'" class="card">
                 <div class="card-header">
@@ -50,14 +54,18 @@
                                 <td>{{ ship.id }}</td>
                                 <td><strong>{{ ship.name }}</strong></td>
                                 <td>{{ ship.voyage }}</td>
-                                <td>{{ ship.eta }}</td>
-                                <td>{{ ship.etd }}</td>
-                                <td>{{ ship.berth }}</td>
+                                <td>{{ ship.eta || '-' }}</td>
+                                <td>{{ ship.etd || '-' }}</td>
+                                <td>{{ ship.berth || '-' }}</td>
                                 <td><span class="tag" :class="statusClass(ship.status)">{{ ship.status }}</span></td>
                                 <td class="actions">
                                     <button class="btn btn-outline btn-sm" @click="openShipDialog(ship)">编辑</button>
+                                    <button class="btn btn-primary btn-sm" @click="currentView = 'workflow'; selectedWorkflowShipId = String(ship.id)">作业流</button>
                                     <button class="btn btn-danger btn-sm" @click="deleteShip(ship.id)">删除</button>
                                 </td>
+                            </tr>
+                            <tr v-if="ships.length === 0">
+                                <td colspan="8" class="empty-cell">暂无船舶数据</td>
                             </tr>
                         </tbody>
                     </table>
@@ -69,7 +77,7 @@
                     <div class="card-header">
                         <strong>泊位状态</strong>
                         <div class="ship-berth-actions">
-                            <button class="btn btn-primary" @click="autoGenerateBerthingPlans">自动生成靠泊计划</button>
+                            <button class="btn btn-primary" @click="autoGenerateBerthingPlans">自动分配泊位</button>
                             <button class="btn btn-outline" @click="openBerthingDialog">新增靠泊计划</button>
                         </div>
                     </div>
@@ -109,6 +117,9 @@
                                         <button class="btn btn-danger btn-sm" @click="deleteBerthingPlan(plan.id)">取消</button>
                                     </td>
                                 </tr>
+                                <tr v-if="berthingPlans.length === 0">
+                                    <td colspan="7" class="empty-cell">暂无靠泊计划</td>
+                                </tr>
                             </tbody>
                         </table>
                     </div>
@@ -125,12 +136,8 @@
                         <div class="loading-kpi"><span>待作业</span><strong>{{ totalPending }} TEU</strong></div>
                     </div>
                 </article>
-                <article class="card chart-card">
-                    <div class="chart-box" id="loadPieChart"></div>
-                </article>
-                <article class="card chart-card">
-                    <div class="chart-box" id="loadBarChart"></div>
-                </article>
+                <article class="card chart-card"><div class="chart-box" id="loadPieChart"></div></article>
+                <article class="card chart-card"><div class="chart-box" id="loadBarChart"></div></article>
                 <article class="card">
                     <div class="card-header"><strong>装卸明细</strong></div>
                     <div class="table-wrapper">
@@ -159,6 +166,113 @@
                     </div>
                 </article>
             </section>
+
+            <section v-if="currentView === 'import'" class="card">
+                <div class="card-header">
+                    <strong>船舶任务导入</strong>
+                    <span>Excel 文件名作为船名，表头需包含箱号、箱型、装载、状态等字段</span>
+                </div>
+                <div class="manifest-import-grid">
+                    <label>
+                        航次（可选）
+                        <input v-model.trim="manifestVoyage" placeholder="不填则系统自动生成">
+                    </label>
+                    <label>
+                        选择 Excel 文件
+                        <input type="file" accept=".xlsx" @change="onManifestChange">
+                    </label>
+                    <label class="checkline">
+                        <input type="checkbox" v-model="manifestAutoRun">
+                        导入后启动后台自动作业
+                    </label>
+                </div>
+                <div class="manifest-import-actions">
+                    <button class="btn btn-primary" :disabled="importingManifest" @click="importManifest">
+                        {{ importingManifest ? '导入中...' : '导入船舶任务' }}
+                    </button>
+                    <span class="manifest-file-hint">{{ manifestFileName || '尚未选择文件' }}</span>
+                </div>
+                <div v-if="manifestResult" class="manifest-result">
+                    <div class="manifest-result-head">
+                        <strong>{{ manifestResult.ship?.name }}</strong>
+                        <span>航次 {{ manifestResult.ship?.voyage }}</span>
+                    </div>
+                    <div class="manifest-result-meta">
+                        <span>新增 {{ manifestResult.importedCount }} 条</span>
+                        <span>更新 {{ manifestResult.updatedCount }} 条</span>
+                        <span>跳过 {{ manifestResult.skippedCount }} 条</span>
+                    </div>
+                    <p class="manifest-result-text">{{ manifestResult.message }}</p>
+                </div>
+            </section>
+
+            <section v-if="currentView === 'workflow'" class="card">
+                <div class="card-header">
+                    <strong>整船后台自动作业流</strong>
+                    <span>启动后系统会按效率逐步推进：自动泊位 → 岸桥卸船 → AGV 转运 → 自动堆场 → 场桥入堆 → 船舶离港</span>
+                </div>
+                <div class="manifest-import-grid">
+                    <label>
+                        选择船舶
+                        <select v-model="selectedWorkflowShipId">
+                            <option value="">请选择</option>
+                            <option v-for="ship in workflowShips" :key="ship.id" :value="String(ship.id)">
+                                {{ ship.name }} / {{ ship.voyage }} / {{ ship.status }}
+                            </option>
+                        </select>
+                    </label>
+                </div>
+                <div class="manifest-import-actions">
+                    <button class="btn btn-primary" :disabled="runningWorkflow || workflowIsActive" @click="executeWorkflow()">
+                        {{ workflowIsActive ? '后台作业中...' : runningWorkflow ? '启动中...' : '启动后台自动作业' }}
+                    </button>
+                    <span class="manifest-file-hint">岸桥 30 箱/h · AGV 20 箱/h · 场桥 25 箱/h</span>
+                </div>
+                <div v-if="workflowMessage" class="auto-berth-message">{{ workflowMessage }}</div>
+                <div v-if="workflowResult" class="manifest-result">
+                    <div class="manifest-result-head">
+                        <strong>{{ workflowResult.ship?.name }}</strong>
+                        <span>当前阶段 {{ workflowResult.stage || '-' }}</span>
+                    </div>
+                    <div class="manifest-result-meta">
+                        <span>状态 {{ workflowResult.status }}</span>
+                        <span>进度 {{ workflowResult.progress || 0 }}%</span>
+                        <span>集装箱 {{ workflowResult.containerCount }} 个</span>
+                        <span>成功入堆 {{ workflowResult.assignedCount }} 个</span>
+                        <span>跳过 {{ workflowResult.skippedCount }} 个</span>
+                        <span>预计 {{ workflowResult.totalMinutes }} 分钟</span>
+                        <span>释放泊位 {{ workflowResult.releasedBerth || '-' }}</span>
+                    </div>
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>阶段</th>
+                                    <th>效率</th>
+                                    <th>预计耗时</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>岸桥卸船</td>
+                                    <td>{{ workflowResult.equipmentRates?.quayCrane }} 箱/h</td>
+                                    <td>{{ workflowResult.stageMinutes?.quayCrane }} 分钟</td>
+                                </tr>
+                                <tr>
+                                    <td>AGV 转运</td>
+                                    <td>{{ workflowResult.equipmentRates?.agv }} 箱/h</td>
+                                    <td>{{ workflowResult.stageMinutes?.agv }} 分钟</td>
+                                </tr>
+                                <tr>
+                                    <td>场桥入堆</td>
+                                    <td>{{ workflowResult.equipmentRates?.yardCrane }} 箱/h</td>
+                                    <td>{{ workflowResult.stageMinutes?.yardCrane }} 分钟</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
         </main>
 
         <div class="modal-overlay" v-if="showShipDialog" @click.self="showShipDialog = false">
@@ -169,7 +283,7 @@
                     <label>航次<input v-model.trim="shipForm.voyage" required></label>
                     <label>ETA<input v-model.trim="shipForm.eta" placeholder="2026-06-03 08:00"></label>
                     <label>ETD<input v-model.trim="shipForm.etd" placeholder="2026-06-05 18:00"></label>
-                    <label>泊位<input v-model.trim="shipForm.berth" placeholder="B01"></label>
+                    <label>泊位<input v-model.trim="shipForm.berth" placeholder="泊位1"></label>
                     <label>状态
                         <select v-model="shipForm.status">
                             <option value="计划中">计划中</option>

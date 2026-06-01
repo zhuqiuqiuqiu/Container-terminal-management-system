@@ -285,8 +285,10 @@ createApp({
       const canvas = document.getElementById('yardCanvas');
       if (!canvas || !canvas._cellData) return;
       const rect = canvas.getBoundingClientRect();
-      const scaleX = canvas.width / (parseFloat(canvas.style.width) || canvas.width);
-      const scaleY = canvas.height / (parseFloat(canvas.style.height) || canvas.height);
+      const logicalWidth = parseFloat(canvas.style.width) || canvas.clientWidth || rect.width;
+      const logicalHeight = parseFloat(canvas.style.height) || canvas.clientHeight || rect.height;
+      const scaleX = logicalWidth / rect.width;
+      const scaleY = logicalHeight / rect.height;
       const mx = (e.clientX - rect.left) * scaleX;
       const my = (e.clientY - rect.top) * scaleY;
       for (const cell of canvas._cellData) {

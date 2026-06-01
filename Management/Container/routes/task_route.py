@@ -49,7 +49,7 @@ def create_task():
     data = request.get_json(silent=True) or {}
     payload = _task_payload(data)
     if not payload['task_type']:
-        return jsonify({"message": "缺少任务名称"}), 400
+        return jsonify({"message": "\u7f3a\u5c11\u4efb\u52a1\u540d\u79f0"}), 400
 
     container = _resolve_container(data)
     now = _now()
@@ -62,7 +62,7 @@ def create_task():
     )
     db.session.add(task)
     db.session.commit()
-    return jsonify({"message": "新增作业单成功", "data": task.to_dict()}), 201
+    return jsonify({"message": "\u65b0\u589e\u4f5c\u4e1a\u5355\u6210\u529f", "data": task.to_dict()}), 201
 
 
 @task_bp.route('/<int:task_id>', methods=['PUT'])
@@ -81,7 +81,7 @@ def update_task(task_id):
     task.container_id = container.id if container else task.container_id
     task.updated_at = _now()
     db.session.commit()
-    return jsonify({"message": "修改作业单成功", "data": task.to_dict()})
+    return jsonify({"message": "\u4fee\u6539\u4f5c\u4e1a\u5355\u6210\u529f", "data": task.to_dict()})
 
 
 @task_bp.route('/<int:task_id>/next_status', methods=['PUT'])
@@ -90,8 +90,8 @@ def next_status(task_id):
     flow = {
         'pending': 'in-progress',
         'in-progress': 'completed',
-        '未开始': 'in-progress',
-        '进行中': 'completed',
+        '\u672a\u5f00\u59cb': 'in-progress',
+        '\u8fdb\u884c\u4e2d': 'completed',
     }
     task.status = flow.get(task.status, task.status)
     task.updated_at = _now()
@@ -100,7 +100,7 @@ def next_status(task_id):
     if task.status == 'completed':
         task.end_time = task.updated_at
     db.session.commit()
-    return jsonify({"message": "任务状态已更新", "data": task.to_dict()})
+    return jsonify({"message": "\u4efb\u52a1\u72b6\u6001\u5df2\u66f4\u65b0", "data": task.to_dict()})
 
 
 @task_bp.route('/<int:task_id>', methods=['DELETE'])
@@ -108,4 +108,4 @@ def delete_task(task_id):
     task = Task.query.get_or_404(task_id)
     db.session.delete(task)
     db.session.commit()
-    return jsonify({"message": "删除作业单成功"})
+    return jsonify({"message": "\u5220\u9664\u4f5c\u4e1a\u5355\u6210\u529f"})

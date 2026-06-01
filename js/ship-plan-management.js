@@ -8,6 +8,15 @@ createApp({
     const loading = ref(false);
     const message = ref('');
     const autoBerthMessage = ref('');
+    const workflowMessage = ref('');
+    const workflowResult = ref(null);
+    const selectedWorkflowShipId = ref('');
+    const manifestFile = ref(null);
+    const manifestVoyage = ref('');
+    const manifestAutoRun = ref(false);
+    const manifestResult = ref(null);
+    const importingManifest = ref(false);
+    const runningWorkflow = ref(false);
     const berths = ref([
       { id: 1, name: '泊位1', occupied: false, currentShip: '', depth: 16.5, length: 400 },
       { id: 2, name: '泊位2', occupied: false, currentShip: '', depth: 16.5, length: 380 },
@@ -30,22 +39,21 @@ createApp({
     const totalDischargePlanned = computed(() => loadingPlans.value.reduce((sum, item) => sum + item.dischargeQty, 0));
     const totalCompleted = computed(() => loadingPlans.value.reduce((sum, item) => sum + item.completedQty, 0));
     const totalPending = computed(() => Math.max(totalLoadPlanned.value + totalDischargePlanned.value - totalCompleted.value, 0));
+    const workflowIsActive = computed(() => ['queued', 'running'].includes(workflowResult.value?.status));
 
     const berthingPlans = computed(() => ships.value
       .filter(ship => ship.berth)
-      .map(ship => {
-        const start = ship.eta || '';
-        const end = ship.etd || '';
-        return {
-          id: ship.id,
-          shipName: ship.name,
-          berthName: ship.berth,
-          startTime: start,
-          endTime: end,
-          duration: calcDuration(start, end),
-          status: ship.status === '已靠泊' ? '进行中' : ship.status === '已离港' ? '已离泊' : '待靠泊',
-        };
-      }));
+      .map(ship => ({
+        id: ship.id,
+        shipName: ship.name,
+        berthName: ship.berth,
+        startTime: ship.eta || '',
+        endTime: ship.etd || '',
+        duration: calcDuration(ship.eta, ship.etd),
+        status: ship.status === '已靠泊' ? '进行中' : ship.status === '已离港' ? '已离港' : '待靠泊',
+      })));
+
+    const workflowShips = computed(() => ships.value.filter(ship => ship.status !== '已离港'));
 
     const statusClass = (status) => ({
       '已靠泊': 'tag-green',
@@ -70,6 +78,10 @@ createApp({
         berth: raw.berth || '',
         status: raw.status || '计划中',
       };
+    }
+
+    function onManifestChange(event) {
+      manifestFile.value = event.target.files && event.target.files[0] ? event.target.files[0] : null;
     }
 
     function buildLoadingPlans() {
@@ -124,11 +136,7 @@ createApp({
     }
 
     function getFreeBerths() {
-      const occupied = new Set(
-        ships.value
-          .filter(ship => ship.status === '已靠泊' && ship.berth)
-          .map(ship => ship.berth)
-      );
+      const occupied = new Set(ships.value.filter(ship => ship.status === '已靠泊' && ship.berth).map(ship => ship.berth));
       return berths.value.filter(berth => !occupied.has(berth.name));
     }
 
@@ -149,9 +157,10 @@ createApp({
       message.value = '';
       try {
         const resp = await fetch('/ships', { credentials: 'same-origin' });
-        if (!resp.ok) throw new Error('船舶数据加载失败');
-        const data = await resp.json();
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.message || '船舶数据加载失败');
         ships.value = Array.isArray(data) ? data.map(normalizeShip) : [];
+        if (!selectedWorkflowShipId.value && workflowShips.value.length) selectedWorkflowShipId.value = String(workflowShips.value[0].id);
         updateBerthOccupancy();
         buildLoadingPlans();
         renderCharts();
@@ -159,6 +168,19 @@ createApp({
         message.value = err.message || '船舶数据加载失败';
       } finally {
         loading.value = false;
+      }
+    }
+
+    async function loadWorkflowStatus(shipId = selectedWorkflowShipId.value) {
+      if (!shipId) return;
+      try {
+        const resp = await fetch(`/ships/${shipId}/workflow/status`, { credentials: 'same-origin' });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.message || '工作流状态加载失败');
+        workflowResult.value = data;
+        workflowMessage.value = data.message || '';
+      } catch (err) {
+        workflowMessage.value = err.message || '工作流状态加载失败';
       }
     }
 
@@ -178,14 +200,13 @@ createApp({
         alert('请填写船名和航次');
         return;
       }
-      const payload = { ...shipForm };
       const url = editingShipId.value ? `/ships/${editingShipId.value}` : '/ships';
       const method = editingShipId.value ? 'PUT' : 'POST';
       const resp = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...shipForm }),
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
@@ -198,10 +219,7 @@ createApp({
 
     async function deleteShip(id) {
       if (!confirm('确定删除该船舶信息吗？')) return;
-      const resp = await fetch(`/ships/${id}`, {
-        method: 'DELETE',
-        credentials: 'same-origin',
-      });
+      const resp = await fetch(`/ships/${id}`, { method: 'DELETE', credentials: 'same-origin' });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
         alert(data.message || '删除船舶失败');
@@ -247,11 +265,7 @@ createApp({
       const freeBerths = getFreeBerths();
       const waitingShips = ships.value
         .filter(ship => ship.status === '计划中')
-        .sort((a, b) => {
-          const at = new Date(a.eta || 0).getTime() || 0;
-          const bt = new Date(b.eta || 0).getTime() || 0;
-          return at - bt || a.id - b.id;
-        });
+        .sort((a, b) => (new Date(a.eta || 0).getTime() || 0) - (new Date(b.eta || 0).getTime() || 0) || a.id - b.id);
 
       if (freeBerths.length === 0) {
         autoBerthMessage.value = '当前没有空闲泊位，暂不能自动生成靠泊计划。';
@@ -272,16 +286,11 @@ createApp({
           const berth = freeBerths[i];
           const start = ship.eta || formatDateTime(new Date(now.getTime() + i * 60 * 60 * 1000));
           const end = ship.etd || formatDateTime(new Date(new Date(start).getTime() + 48 * 60 * 60 * 1000));
-          await updateShipRecord(ship, {
-            berth: berth.name,
-            eta: start,
-            etd: end,
-            status: '已靠泊',
-          });
-          assignments.push(`${ship.name} → ${berth.name}`);
+          await updateShipRecord(ship, { berth: berth.name, eta: start, etd: end, status: '已靠泊' });
+          assignments.push(`${ship.name} -> ${berth.name}`);
         }
         await loadShips();
-        autoBerthMessage.value = `已自动生成 ${assignments.length} 条靠泊计划：${assignments.join('，')}`;
+        autoBerthMessage.value = `已自动生成 ${assignments.length} 条靠泊计划：${assignments.join('；')}`;
       } catch (err) {
         autoBerthMessage.value = err.message || '自动生成靠泊计划失败';
       }
@@ -305,9 +314,76 @@ createApp({
       await loadShips();
     }
 
+    async function importManifest() {
+      if (!manifestFile.value) {
+        alert('请先选择一个 Excel 文件');
+        return;
+      }
+      const formData = new FormData();
+      formData.append('file', manifestFile.value);
+      if (manifestVoyage.value.trim()) formData.append('voyage', manifestVoyage.value.trim());
+      if (manifestAutoRun.value) formData.append('autoRunWorkflow', 'true');
+      importingManifest.value = true;
+      try {
+        const resp = await fetch('/ships/import_manifest', {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: formData,
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          alert(data.message || 'Excel 导入失败');
+          return;
+        }
+        manifestResult.value = data;
+        if (data.ship?.id) selectedWorkflowShipId.value = String(data.ship.id);
+        if (data.workflow) {
+          workflowResult.value = data.workflow;
+          workflowMessage.value = data.workflow.message || data.message;
+          currentView.value = 'workflow';
+        } else {
+          currentView.value = 'import';
+        }
+        await loadShips();
+        await loadWorkflowStatus();
+      } catch (err) {
+        alert(err.message || 'Excel 导入失败');
+      } finally {
+        importingManifest.value = false;
+      }
+    }
+
+    async function executeWorkflow(shipId = selectedWorkflowShipId.value) {
+      if (!shipId) {
+        alert('请选择需要启动后台作业的船舶');
+        return;
+      }
+      runningWorkflow.value = true;
+      workflowMessage.value = '';
+      try {
+        const resp = await fetch(`/ships/${shipId}/workflow`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ secondsPerWorkMinute: 1 }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.message || '后台作业启动失败');
+        workflowResult.value = data;
+        workflowMessage.value = data.message;
+        await loadShips();
+        await loadWorkflowStatus(shipId);
+      } catch (err) {
+        workflowMessage.value = err.message || '后台作业启动失败';
+      } finally {
+        runningWorkflow.value = false;
+      }
+    }
+
     let chartPie = null;
     let chartBar = null;
     let timer = null;
+    let workflowTimer = null;
     function renderCharts() {
       nextTick(() => {
         const pieDom = document.getElementById('loadPieChart');
@@ -353,15 +429,25 @@ createApp({
       if (currentView.value === 'loading') renderCharts();
     }
 
+    async function pollWorkflow() {
+      if (!selectedWorkflowShipId.value) return;
+      await loadWorkflowStatus();
+      if (workflowIsActive.value || currentView.value === 'workflow') {
+        await loadShips();
+      }
+    }
+
     onMounted(() => {
       tick();
       loadShips();
       timer = setInterval(tick, 1000);
+      workflowTimer = setInterval(pollWorkflow, 3000);
       window.addEventListener('resize', renderCharts);
     });
 
     onUnmounted(() => {
       if (timer) clearInterval(timer);
+      if (workflowTimer) clearInterval(workflowTimer);
       window.removeEventListener('resize', renderCharts);
       chartPie?.dispose();
       chartBar?.dispose();
@@ -369,6 +455,13 @@ createApp({
 
     watch(currentView, (view) => {
       if (view === 'loading') renderCharts();
+      if (view === 'workflow') loadWorkflowStatus();
+    });
+
+    watch(selectedWorkflowShipId, () => {
+      workflowResult.value = null;
+      workflowMessage.value = '';
+      loadWorkflowStatus();
     });
 
     return {
@@ -378,6 +471,12 @@ createApp({
       berths,
       berthingPlans,
       loadingPlans,
+      workflowShips,
+      selectedWorkflowShipId,
+      workflowMessage,
+      workflowResult,
+      workflowIsActive,
+      runningWorkflow,
       showShipDialog,
       showBerthingDialog,
       editingShipId,
@@ -392,7 +491,14 @@ createApp({
       loading,
       message,
       autoBerthMessage,
+      manifestFile,
+      manifestVoyage,
+      manifestAutoRun,
+      manifestResult,
+      importingManifest,
+      manifestFileName: computed(() => manifestFile.value ? manifestFile.value.name : ''),
       statusClass,
+      onManifestChange,
       openShipDialog,
       saveShip,
       deleteShip,
@@ -400,6 +506,8 @@ createApp({
       saveBerthingPlan,
       deleteBerthingPlan,
       autoGenerateBerthingPlans,
+      importManifest,
+      executeWorkflow,
     };
   },
 }).mount('#app');

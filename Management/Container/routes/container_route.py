@@ -8,6 +8,7 @@ from Container.models.container_model import Container, db
 container_bp = Blueprint('container_bp', __name__)  #创建一个集装箱功能模块
 
 STATUS_FLOW = {
+    "\u5728\u8239\u4e0a": "\u5df2\u5378\u8239",
     "\u5728\u8239\u4e2d": "\u5df2\u5378\u8239",
     "\u5df2\u5378\u8239": "\u5806\u573a\u5b58\u50a8",
     "\u5806\u573a\u5b58\u50a8": "\u7b49\u5f85\u63d0\u7bb1",
@@ -44,7 +45,7 @@ def create_container():
         area=data.get('area') or data.get('zone'),
         column=data.get('column') if data.get('column') is not None else data.get('row'),
         layer=data.get('layer') if data.get('layer') is not None else data.get('tier'),
-        status=data.get('status', '\u5728\u8239\u4e2d')
+        status=data.get('status', '\u5728\u8239\u4e0a')
     )
 
     db.session.add(container)

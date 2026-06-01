@@ -1049,6 +1049,61 @@ th { background: #e8f0f8; color: #1a3a5c; }
     flex-wrap: wrap;
     justify-content: flex-end;
 }
+.manifest-import-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 12px;
+}
+.manifest-import-grid label {
+    display: grid;
+    gap: 8px;
+    color: var(--text-light);
+}
+.manifest-import-grid input {
+    border: 1px solid #bfd0e2;
+    border-radius: 10px;
+    padding: 11px 12px;
+    background: #fff;
+}
+.manifest-import-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+}
+.manifest-file-hint {
+    color: var(--text-light);
+    font-size: 13px;
+}
+.manifest-result {
+    margin-top: 16px;
+    padding: 14px;
+    border-radius: 12px;
+    border: 1px solid #bfd0e2;
+    background: #f8fcff;
+}
+.manifest-result-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+.manifest-result-meta {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+    color: var(--text-light);
+    font-size: 13px;
+}
+.manifest-result-text {
+    margin: 10px 0 0;
+    color: var(--text);
+    line-height: 1.7;
+}
 .auto-berth-message {
     margin: 12px 0;
     padding: 10px 12px;
@@ -1123,6 +1178,9 @@ th { background: #e8f0f8; color: #1a3a5c; }
     }
     .operation-feed-row,
     .yard-usage-row {
+        grid-template-columns: 1fr;
+    }
+    .manifest-import-grid {
         grid-template-columns: 1fr;
     }
 }

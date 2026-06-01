@@ -1,4 +1,6 @@
 from flask_sqlalchemy import SQLAlchemy
+
+
 db = SQLAlchemy()
 
 
@@ -8,7 +10,7 @@ class Container(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     container_no = db.Column(db.String(30), unique=True, nullable=False)
     container_type = db.Column(db.String(10), nullable=False)
-    status = db.Column(db.String(20), default='\u5728\u8239\u4e2d')
+    status = db.Column(db.String(20), default='\u5728\u8239\u4e0a')
     yard = db.Column('yard_name', db.String(30))
     ship_id = db.Column(db.Integer)
     load_flag = db.Column(db.String(20), default='\u7a7a\u7bb1')
@@ -46,7 +48,9 @@ class Container(db.Model):
             "row": self.column,
             "layer": self.layer,
             "tier": self.layer,
-            "status": self.status
+            "ship_id": self.ship_id,
+            "shipId": self.ship_id,
+            "status": self.status,
         }
 
 
@@ -85,11 +89,10 @@ class Yard(db.Model):
         return 5
 
     def used_capacity(self):
-        actual_used = Container.query.filter(
+        return Container.query.filter(
             Container.yard == self.yard_name,
-            Container.status != '\u79bb\u6e2f'
+            Container.status != '\u79bb\u6e2f',
         ).count()
-        return actual_used
 
     def to_dict(self):
         used = self.used_capacity()
@@ -129,7 +132,7 @@ class Ship(db.Model):
     eta = db.Column('ETA', db.String(30))
     etd = db.Column('ETD', db.String(30))
     berth = db.Column(db.String(30))
-    status = db.Column(db.String(20), default='计划中')
+    status = db.Column(db.String(20), default='\u8ba1\u5212\u4e2d')
 
     def to_dict(self):
         return {
@@ -141,7 +144,7 @@ class Ship(db.Model):
             "etd": self.etd,
             "ETD": self.etd,
             "berth": self.berth,
-            "status": self.status or '计划中',
+            "status": self.status or '\u8ba1\u5212\u4e2d',
         }
 
 
@@ -175,9 +178,9 @@ class Task(db.Model):
     def normalized_status(self):
         mapping = {
             'processing': 'in-progress',
-            '进行中': 'in-progress',
-            '未开始': 'pending',
-            '已完成': 'completed',
+            '\u8fdb\u884c\u4e2d': 'in-progress',
+            '\u672a\u5f00\u59cb': 'pending',
+            '\u5df2\u5b8c\u6210': 'completed',
         }
         return mapping.get(self.status, self.status or 'pending')
 
@@ -199,6 +202,8 @@ class Task(db.Model):
             "yardSlot": self.remark or '',
             "status": self.normalized_status(),
             "priority": self.priority or 3,
+            "estimatedTime": self.estimated_time,
+            "actualTime": self.actual_time,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
         }
