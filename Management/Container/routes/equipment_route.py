@@ -36,14 +36,39 @@ def _normalize_payload(data):
 
 
 def _task_required_equipment_type(task):
-    text = f'{task.task_type or ""} {task.from_pos or ""} {task.to_pos or ""} {task.remark or ""}'
-    if 'AGV' in text or '\u8f6c\u8fd0' in text or '\u8fd0\u9001' in text:
+    task_name = task.task_type or ''
+    if 'AGV' in task_name:
         return TYPE_AGV
+    if '\u573a\u6865' in task_name or '\u5165\u5806' in task_name:
+        return TYPE_YARD_CRANE
+    if '\u5cb8\u6865' in task_name or '\u5378\u8239' in task_name:
+        return TYPE_QUAY_CRANE
+
+    text = f'{task.task_type or ""} {task.from_pos or ""} {task.to_pos or ""} {task.remark or ""}'
     if '\u573a\u6865' in text or '\u5165\u5806' in text or '\u5806\u573a' in text:
         return TYPE_YARD_CRANE
     if '\u5cb8\u6865' in text or '\u5378\u8239' in text or '\u6cca\u4f4d' in text:
         return TYPE_QUAY_CRANE
+    if 'AGV' in text or '\u8f6c\u8fd0' in text or '\u8fd0\u9001' in text:
+        return TYPE_AGV
     return None
+
+
+def _assign_task_to_equipment(equipment, task):
+    previous_equipment = Equipment.query.filter_by(current_task_id=task.id).first()
+    if previous_equipment and previous_equipment.id != equipment.id:
+        previous_equipment.current_task_id = None
+        previous_equipment.status = STATUS_IDLE
+        previous_equipment.updated_at = _now()
+
+    now = _now()
+    task.equipment_id = equipment.id
+    task.status = 'in-progress'
+    task.start_time = task.start_time or now
+    task.updated_at = now
+    equipment.current_task_id = task.id
+    equipment.status = STATUS_WORKING
+    equipment.updated_at = now
 
 
 def _validate_equipment_payload(data):
@@ -154,25 +179,43 @@ def assign_task(equipment_id):
             "message": f"\u8be5\u4efb\u52a1\u9700\u8981 {required_type}\uff0c\u4e0d\u80fd\u5206\u914d {equipment.equipment_type}"
         }), 400
 
-    previous_equipment = Equipment.query.filter_by(current_task_id=task.id).first()
-    if previous_equipment and previous_equipment.id != equipment.id:
-        previous_equipment.current_task_id = None
-        previous_equipment.status = STATUS_IDLE
-        previous_equipment.updated_at = _now()
-
-    now = _now()
-    task.equipment_id = equipment.id
-    task.status = 'in-progress'
-    task.start_time = task.start_time or now
-    task.updated_at = now
-    equipment.current_task_id = task.id
-    equipment.status = STATUS_WORKING
-    equipment.updated_at = now
+    _assign_task_to_equipment(equipment, task)
     db.session.commit()
     return jsonify({
         "message": f"{equipment.name} \u5df2\u5206\u914d\u5230\u4efb\u52a1 {task.task_no or task.id}",
         "equipment": equipment.to_dict(),
         "task": task.to_dict(),
+    })
+
+
+@equipment_bp.route('/agv_dispatch', methods=['POST'])
+def agv_dispatch():
+    idle_agvs = Equipment.query.filter(
+        Equipment.equipment_type == TYPE_AGV,
+        Equipment.status == STATUS_IDLE,
+    ).order_by(Equipment.id).all()
+
+    candidate_tasks = Task.query.filter(
+        Task.status != 'completed',
+        Task.equipment_id.is_(None),
+    ).order_by(Task.priority.desc(), Task.id).all()
+    agv_tasks = [task for task in candidate_tasks if _task_required_equipment_type(task) == TYPE_AGV]
+
+    assignments = []
+    for equipment, task in zip(idle_agvs, agv_tasks):
+        _assign_task_to_equipment(equipment, task)
+        assignments.append({
+            "equipment": equipment.to_dict(),
+            "task": task.to_dict(),
+        })
+
+    db.session.commit()
+    return jsonify({
+        "message": f"\u8d2a\u5a6a\u8c03\u5ea6\u5b8c\u6210\uff0c\u5df2\u5206\u914d {len(assignments)} \u4e2a AGV \u4efb\u52a1",
+        "assignedCount": len(assignments),
+        "idleAgvCount": len(idle_agvs),
+        "waitingTaskCount": len(agv_tasks),
+        "assignments": assignments,
     })
 
 

@@ -28,7 +28,7 @@ def _resolve_container(data):
 
 
 def _task_payload(data):
-    return {
+    payload = {
         'task_type': (data.get('taskName') or data.get('task_type') or data.get('taskType') or '').strip(),
         'from_pos': (data.get('origin') or data.get('from_pos') or data.get('fromPos') or '').strip(),
         'to_pos': (data.get('destination') or data.get('to_pos') or data.get('toPos') or '').strip(),
@@ -36,6 +36,37 @@ def _task_payload(data):
         'status': (data.get('status') or 'pending').strip(),
         'priority': int(data.get('priority') or 3),
     }
+    _normalize_transfer_flow(payload)
+    return payload
+
+
+def _slot_to_transfer_point(slot_text):
+    if not slot_text or '/' not in slot_text:
+        return ''
+    yard_name = slot_text.split('/', 1)[0].strip()
+    return f'{yard_name}\u8f6c\u8fd0\u70b9' if yard_name else ''
+
+
+def _append_final_slot_remark(remark, slot_text):
+    final_text = f'\u6700\u7ec8\u7bb1\u4f4d {slot_text}'
+    if final_text in (remark or ''):
+        return remark
+    return f'{final_text}\uff1b{remark}' if remark else final_text
+
+
+def _normalize_transfer_flow(payload):
+    task_type = payload['task_type']
+    destination = payload['to_pos']
+    transfer_point = _slot_to_transfer_point(destination)
+
+    if 'AGV' in task_type and transfer_point:
+        payload['to_pos'] = transfer_point
+        payload['remark'] = _append_final_slot_remark(payload['remark'], destination)
+        return
+
+    if ('\u573a\u6865' in task_type or '\u5165\u5806' in task_type) and transfer_point:
+        if not payload['from_pos'] or payload['from_pos'] == destination or '/' in payload['from_pos']:
+            payload['from_pos'] = transfer_point
 
 
 @task_bp.route('', methods=['GET'])

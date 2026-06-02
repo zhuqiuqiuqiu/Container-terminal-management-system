@@ -237,6 +237,7 @@ class Equipment(db.Model):
 
     def to_dict(self):
         task = Task.query.get(self.current_task_id) if self.current_task_id else None
+        active_task = task if task and task.normalized_status() != 'completed' and self.status == '\u5de5\u4f5c\u4e2d' else None
         return {
             "id": self.id,
             "code": self.code,
@@ -246,9 +247,9 @@ class Equipment(db.Model):
             "status": self.status or '\u7a7a\u95f2',
             "location": self.location or '',
             "efficiency": self.efficiency or 0,
-            "currentTaskId": self.current_task_id,
-            "currentTaskName": task.task_type if task else '',
-            "currentContainer": task.container.container_no if task and task.container else '',
+            "currentTaskId": active_task.id if active_task else None,
+            "currentTaskName": active_task.task_type if active_task else '',
+            "currentContainer": active_task.container.container_no if active_task and active_task.container else '',
             "lastMaintenanceAt": self.last_maintenance_at,
             "remark": self.remark or '',
             "createdAt": self.created_at,

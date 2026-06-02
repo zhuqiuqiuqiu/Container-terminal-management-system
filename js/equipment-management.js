@@ -1,5 +1,12 @@
 const { createApp, ref, reactive, computed, onMounted, onBeforeUnmount } = Vue;
 
+const STATUS_IDLE = '\u7a7a\u95f2';
+const STATUS_WORKING = '\u5de5\u4f5c\u4e2d';
+const STATUS_FAULT = '\u6545\u969c';
+const TYPE_QUAY = '\u5cb8\u6865';
+const TYPE_YARD = '\u573a\u6865';
+const TYPE_AGV = 'AGV';
+
 createApp({
   setup() {
     const currentTime = ref('');
@@ -14,8 +21,8 @@ createApp({
     const deviceForm = reactive({
       code: '',
       name: '',
-      equipmentType: '岸桥',
-      status: '空闲',
+      equipmentType: TYPE_QUAY,
+      status: STATUS_IDLE,
       location: '',
       efficiency: 30,
       remark: '',
@@ -52,7 +59,7 @@ createApp({
         code: item.code || '',
         name: item.name || '',
         equipmentType: item.equipmentType || item.equipment_type || '',
-        status: item.status || '空闲',
+        status: item.status || STATUS_IDLE,
         location: item.location || '',
         efficiency: Number(item.efficiency || 0),
         currentTaskId: item.currentTaskId || null,
@@ -97,9 +104,9 @@ createApp({
     }
 
     const statusCounts = computed(() => ({
-      idle: equipment.value.filter(item => item.status === '空闲').length,
-      working: equipment.value.filter(item => item.status === '工作中').length,
-      fault: equipment.value.filter(item => item.status === '故障').length,
+      idle: equipment.value.filter(item => item.status === STATUS_IDLE).length,
+      working: equipment.value.filter(item => item.status === STATUS_WORKING).length,
+      fault: equipment.value.filter(item => item.status === STATUS_FAULT).length,
     }));
 
     const filteredEquipment = computed(() => {
@@ -119,9 +126,9 @@ createApp({
     function requiredEquipmentType(task) {
       if (!task) return '';
       const text = [task.taskName, task.origin, task.destination].join(' ');
-      if (text.includes('AGV') || text.includes('转运') || text.includes('运送')) return 'AGV';
-      if (text.includes('场桥') || text.includes('入堆') || text.includes('堆场')) return '场桥';
-      if (text.includes('岸桥') || text.includes('卸船') || text.includes('泊位')) return '岸桥';
+      if (text.includes('AGV') || text.includes('\u8f6c\u8fd0') || text.includes('\u8fd0\u9001')) return TYPE_AGV;
+      if (text.includes('\u573a\u6865') || text.includes('\u5165\u5806') || text.includes('\u5806\u573a')) return TYPE_YARD;
+      if (text.includes('\u5cb8\u6865') || text.includes('\u5378\u8239') || text.includes('\u6cca\u4f4d')) return TYPE_QUAY;
       return '';
     }
 
@@ -129,7 +136,21 @@ createApp({
 
     const idleEquipment = computed(() => {
       const requiredType = selectedTaskRequiredType.value;
-      return equipment.value.filter(item => item.status === '空闲' && (!requiredType || item.equipmentType === requiredType));
+      return equipment.value.filter(item => item.status === STATUS_IDLE && (!requiredType || item.equipmentType === requiredType));
+    });
+
+    const idleAgvList = computed(() => equipment.value.filter(item => item.equipmentType === TYPE_AGV && item.status === STATUS_IDLE));
+
+    const waitingAgvTasks = computed(() => tasks.value
+      .filter(task => task.status !== 'completed' && !task.equipmentId && requiredEquipmentType(task) === TYPE_AGV)
+      .sort((a, b) => Number(a.id) - Number(b.id)));
+
+    const agvDispatchPreview = computed(() => {
+      const count = Math.min(idleAgvList.value.length, waitingAgvTasks.value.length);
+      return Array.from({ length: count }, (_, index) => ({
+        agv: idleAgvList.value[index],
+        task: waitingAgvTasks.value[index],
+      }));
     });
 
     const selectedTaskSummary = computed(() => {
@@ -160,8 +181,8 @@ createApp({
         Object.assign(deviceForm, {
           code: '',
           name: '',
-          equipmentType: '岸桥',
-          status: '空闲',
+          equipmentType: TYPE_QUAY,
+          status: STATUS_IDLE,
           location: '',
           efficiency: 30,
           remark: '',
@@ -212,6 +233,19 @@ createApp({
           body: JSON.stringify({ taskId: Number(selectedTaskId.value) }),
         });
         await refreshAll();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function dispatchAgvTasks() {
+      try {
+        const result = await apiRequest('/equipment/agv_dispatch', {
+          method: 'POST',
+          body: JSON.stringify({}),
+        });
+        await refreshAll();
+        alert(result.message || '\u8c03\u5ea6\u5b8c\u6210');
       } catch (err) {
         alert(err.message);
       }
@@ -271,6 +305,9 @@ createApp({
       selectedTaskId,
       selectedTaskSummary,
       selectedTaskRequiredType,
+      idleAgvList,
+      waitingAgvTasks,
+      agvDispatchPreview,
       showDeviceDialog,
       editingEquipmentId,
       deviceForm,
@@ -284,6 +321,7 @@ createApp({
       saveEquipment,
       deleteEquipment,
       assignTask,
+      dispatchAgvTasks,
       releaseEquipment,
       markFault,
       repairEquipment,

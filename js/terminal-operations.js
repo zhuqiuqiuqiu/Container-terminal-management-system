@@ -61,8 +61,8 @@
         };
       }
 
-      async function loadTasks() {
-        loading.value = true;
+      async function loadTasks(silent = false) {
+        if (!silent) loading.value = true;
         try {
           const resp = await fetch('/tasks', { credentials: 'same-origin' });
           if (!resp.ok) throw new Error('作业单数据加载失败');
@@ -71,7 +71,7 @@
         } catch (err) {
           tasks.value = [];
         } finally {
-          loading.value = false;
+          if (!silent) loading.value = false;
         }
       }
 
@@ -228,8 +228,8 @@
         loadDashboard();
         clockTimer = setInterval(refreshClock, 1000);
         refreshTimer = setInterval(() => {
+          loadTasks(true);
           if (activeTab.value === 'dashboard' || activeTab.value === 'status') {
-            loadTasks();
             loadDashboard();
           }
         }, 5000);

@@ -23,6 +23,7 @@
                 <button class="tab-btn" :class="{ active: activeTab === 'dashboard' }" @click="activeTab = 'dashboard'">设备总览</button>
                 <button class="tab-btn" :class="{ active: activeTab === 'devices' }" @click="activeTab = 'devices'">设备台账</button>
                 <button class="tab-btn" :class="{ active: activeTab === 'assign' }" @click="activeTab = 'assign'">任务分配</button>
+                <button class="tab-btn" :class="{ active: activeTab === 'agvDispatch' }" @click="activeTab = 'agvDispatch'">AGV调度</button>
                 <button class="tab-btn" :class="{ active: activeTab === 'maintenance' }" @click="activeTab = 'maintenance'">故障维护</button>
             </section>
 
@@ -172,6 +173,59 @@
                             <button class="btn btn-primary btn-sm" :disabled="!selectedTaskId" @click="assignTask(item)">分配</button>
                         </article>
                         <p v-if="idleEquipment.length === 0" class="empty-note">暂无匹配的空闲设备，需等待同类型设备释放、维修完成或新增对应设备。</p>
+                    </div>
+                </article>
+            </section>
+
+            <section v-if="activeTab === 'agvDispatch'" class="grid-two">
+                <article class="card">
+                    <div class="card-header">
+                        <div>
+                            <strong>AGV 贪婪调度</strong>
+                            <span>空闲 AGV {{ idleAgvList.length }} 台 · 待转运任务 {{ waitingAgvTasks.length }} 条</span>
+                        </div>
+                        <button class="btn btn-primary" :disabled="idleAgvList.length === 0 || waitingAgvTasks.length === 0" @click="dispatchAgvTasks">一键调度</button>
+                    </div>
+                    <div class="operation-feed">
+                        <div v-for="item in agvDispatchPreview" :key="item.agv.id + '-' + item.task.id" class="operation-feed-row">
+                            <span class="status-dot in-progress"></span>
+                            <div>
+                                <strong>{{ item.agv.name }} → {{ item.task.containerId || item.task.taskName }}</strong>
+                                <small>{{ item.task.origin }} → {{ item.task.destination }}</small>
+                            </div>
+                            <span class="status-badge status-in-progress">待分配</span>
+                        </div>
+                        <p v-if="agvDispatchPreview.length === 0" class="empty-note">暂无可调度组合：需要同时存在空闲 AGV 和未绑定设备的 AGV 转运任务。</p>
+                    </div>
+                </article>
+
+                <article class="card">
+                    <div class="card-header">
+                        <strong>AGV 任务池</strong>
+                        <span>{{ waitingAgvTasks.length }} 条等待调度</span>
+                    </div>
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>任务</th>
+                                    <th>箱号</th>
+                                    <th>路径</th>
+                                    <th>状态</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="task in waitingAgvTasks" :key="task.id">
+                                    <td><strong>{{ task.taskName }}</strong></td>
+                                    <td class="text-mono">{{ task.containerId || '-' }}</td>
+                                    <td>{{ task.origin }} → {{ task.destination }}</td>
+                                    <td>{{ task.status }}</td>
+                                </tr>
+                                <tr v-if="waitingAgvTasks.length === 0">
+                                    <td colspan="4" class="empty-cell">暂无等待 AGV 调度的任务</td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
                 </article>
             </section>

@@ -11,7 +11,7 @@ from zipfile import ZipFile
 from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy.exc import IntegrityError
 
-from Container.models.container_model import Container, Ship, Task, Yard, db
+from Container.models.container_model import Container, Equipment, Ship, Task, Yard, db
 
 
 ship_bp = Blueprint('ship_bp', __name__, url_prefix='/ships')
@@ -23,6 +23,12 @@ STATUS_ON_SHIP = '\u5728\u8239\u4e0a'
 STATUS_UNLOADED = '\u5df2\u5378\u8239'
 STATUS_TRANSFERRING = '\u8f6c\u8fd0\u4e2d'
 STATUS_IN_YARD = '\u5806\u573a\u5b58\u50a8'
+EQUIPMENT_IDLE = '\u7a7a\u95f2'
+EQUIPMENT_WORKING = '\u5de5\u4f5c\u4e2d'
+EQUIPMENT_FAULT = '\u6545\u969c'
+TYPE_QUAY_CRANE = '\u5cb8\u6865'
+TYPE_YARD_CRANE = '\u573a\u6865'
+TYPE_AGV = 'AGV'
 
 DEFAULT_BERTHS = [f'\u6cca\u4f4d{i}' for i in range(1, 7)]
 EQUIPMENT_RATES = {
@@ -30,6 +36,8 @@ EQUIPMENT_RATES = {
     'agv': 20,
     'yardCrane': 25,
 }
+BERTH_FRONT_CAPACITY = 2
+YARD_TRANSFER_CAPACITY = 1
 DEFAULT_SECONDS_PER_WORK_MINUTE = 1.0
 WORKFLOW_RUNS = {}
 WORKFLOW_LOCK = threading.Lock()
@@ -520,6 +528,7 @@ def _build_slot_plan(containers, yards):
             "area": area,
             "column": column,
             "layer": layer,
+            "transferPoint": f'{yard_name}\u8f6c\u8fd0\u70b9',
             "slotText": f'{yard_name}/{area}/\u5217{column}/\u5c42{layer}',
         }
 
@@ -529,10 +538,91 @@ def _build_slot_plan(containers, yards):
 def _complete_task(task_no):
     task = Task.query.filter_by(task_no=task_no).first()
     if task:
-        task.status = 'completed'
-        task.end_time = _format_dt(_now())
-        task.updated_at = task.end_time
-        task.actual_time = task.estimated_time
+        _finish_task(task)
+
+
+def _assign_equipment(task, equipment_type, location_hint=None):
+    if not task or task.equipment_id:
+        return None
+
+    db.session.flush()
+
+    query = Equipment.query.filter(
+        Equipment.equipment_type == equipment_type,
+        Equipment.status == EQUIPMENT_IDLE,
+    )
+    if location_hint:
+        equipment = query.filter(Equipment.location.like(f'%{location_hint}%')).order_by(Equipment.id).first()
+    else:
+        equipment = None
+    if equipment is None:
+        equipment = query.order_by(Equipment.id).first()
+
+    if equipment is None:
+        query = Equipment.query.filter(
+            Equipment.equipment_type == equipment_type,
+            Equipment.status != EQUIPMENT_FAULT,
+        )
+        if location_hint:
+            equipment = query.filter(Equipment.location.like(f'%{location_hint}%')).order_by(Equipment.id).first()
+        else:
+            equipment = None
+        if equipment is None:
+            equipment = query.order_by(Equipment.id).first()
+
+    if equipment is None:
+        return None
+
+    task.equipment_id = equipment.id
+    equipment.current_task_id = task.id
+    equipment.status = EQUIPMENT_WORKING
+    equipment.updated_at = _format_dt(_now())
+    return equipment
+
+
+def _berth_front_count(ship_id):
+    return Container.query.filter(
+        Container.ship_id == ship_id,
+        Container.status == STATUS_UNLOADED,
+    ).count()
+
+
+def _transfer_point_count(ship_id, yard_name):
+    return Container.query.filter(
+        Container.ship_id == ship_id,
+        Container.status == STATUS_TRANSFERRING,
+        Container.yard == yard_name,
+    ).count()
+
+
+def _wait_for_buffer_capacity(ship_id, buffer_name, count_func, capacity, seconds_per_work_minute):
+    wait_seconds = max(0.5, seconds_per_work_minute)
+    while count_func() >= capacity:
+        _update_workflow_state(
+            ship_id,
+            stage='\u7b49\u5f85\u7f13\u51b2\u533a',
+            message=f'{buffer_name} \u5df2\u8fbe\u4e0a\u9650 {capacity} \u7bb1\uff0c\u7b49\u5f85\u4e0b\u9053\u5de5\u5e8f\u91ca\u653e\u4f4d\u7f6e',
+        )
+        time.sleep(wait_seconds)
+
+
+def _release_task_equipment(task):
+    if not task or not task.equipment_id:
+        return
+    equipment = Equipment.query.get(task.equipment_id)
+    if equipment and equipment.current_task_id == task.id:
+        equipment.current_task_id = None
+        equipment.status = EQUIPMENT_IDLE
+        equipment.updated_at = _format_dt(_now())
+
+
+def _finish_task(task):
+    finished_at = _format_dt(_now())
+    task.status = 'completed'
+    task.end_time = finished_at
+    task.updated_at = finished_at
+    task.actual_time = task.estimated_time
+    _release_task_equipment(task)
 
 
 def _run_workflow_worker(app, ship_id, seconds_per_work_minute):
@@ -547,6 +637,13 @@ def _run_workflow_worker(app, ship_id, seconds_per_work_minute):
                 Container.ship_id == ship.id,
                 Container.status != STATUS_DEPARTED,
             ).order_by(Container.id).all()
+            status_priority = {
+                STATUS_TRANSFERRING: 0,
+                STATUS_UNLOADED: 1,
+                STATUS_ON_SHIP: 2,
+                STATUS_IN_YARD: 3,
+            }
+            containers.sort(key=lambda item: (status_priority.get(item.status, 4), item.id))
             yards = Yard.query.order_by(Yard.id).all()
             if not containers:
                 raise ValueError('\u8be5\u8239\u6682\u65e0\u9700\u5904\u7406\u7684\u96c6\u88c5\u7bb1')
@@ -579,110 +676,169 @@ def _run_workflow_worker(app, ship_id, seconds_per_work_minute):
                 progress=5,
             )
 
+            assignments, skipped = _build_slot_plan(containers, yards)
             qc_sleep = _sleep_seconds(stage_minutes['quayCrane'], len(containers), seconds_per_work_minute)
+            agv_sleep = _sleep_seconds(stage_minutes['agv'], max(len(assignments), 1), seconds_per_work_minute)
+            yc_sleep = _sleep_seconds(stage_minutes['yardCrane'], max(len(assignments), 1), seconds_per_work_minute)
+            total_operations = len(containers) + len(assignments) * 2
+            finished_operations = 0
+            assigned_count = 0
+
+            _update_workflow_state(
+                ship_id,
+                stage='\u6d41\u6c34\u4f5c\u4e1a',
+                message='\u5f00\u59cb\u6309\u5355\u7bb1\u6d41\u6c34\u7ebf\u63a8\u8fdb\uff1a\u5cb8\u6865\u5378\u8239 \u2192 AGV\u8f6c\u8fd0 \u2192 \u573a\u6865\u5165\u5806',
+                skippedCount=len(skipped),
+                progress=5,
+            )
+
             for index, container in enumerate(containers, start=1):
+                rec = assignments.get(container.id)
+
                 start_text = _format_dt(_now())
-                task = _upsert_task(
-                    task_no=f'QC-{ship.id}-{container.container_no}',
-                    task_type='\u5cb8\u6865\u5378\u8239',
-                    container_id=container.id,
-                    from_pos=f'{ship.name}/{berth}',
-                    to_pos='\u6cca\u4f4d\u524d\u6cbf',
-                    remark='\u5cb8\u6865\u6548\u7387 30 \u7bb1/h',
-                    status='in-progress',
-                    estimated_time=math.ceil(60 / EQUIPMENT_RATES['quayCrane']),
-                    start_time=start_text,
-                )
-                container.status = STATUS_UNLOADED
-                task.end_time = _format_dt(_now())
-                task.status = 'completed'
-                task.actual_time = task.estimated_time
+                qc_task_no = f'QC-{ship.id}-{container.container_no}'
+                qc_task = Task.query.filter_by(task_no=qc_task_no).first()
+                if container.status == STATUS_ON_SHIP:
+                    _wait_for_buffer_capacity(
+                        ship_id,
+                        '\u5cb8\u6865-AGV\u4ea4\u63a5\u70b9',
+                        lambda: _berth_front_count(ship.id),
+                        BERTH_FRONT_CAPACITY,
+                        seconds_per_work_minute,
+                    )
+                    qc_task = _upsert_task(
+                        task_no=qc_task_no,
+                        task_type='\u5cb8\u6865\u5378\u8239',
+                        container_id=container.id,
+                        from_pos=f'{ship.name}/{berth}',
+                        to_pos='\u6cca\u4f4d\u524d\u6cbf',
+                        remark='\u5cb8\u6865\u6548\u7387 30 \u7bb1/h',
+                        status='in-progress',
+                        estimated_time=math.ceil(60 / EQUIPMENT_RATES['quayCrane']),
+                        start_time=start_text,
+                    )
+                    qc_equipment = _assign_equipment(qc_task, TYPE_QUAY_CRANE)
+                    if qc_equipment:
+                        qc_task.to_pos = f'{qc_equipment.name}-AGV\u4ea4\u63a5\u70b9'
+                    db.session.commit()
+                    _update_workflow_state(
+                        ship_id,
+                        stage='\u5cb8\u6865\u5378\u8239',
+                        message=f'\u5cb8\u6865\u6b63\u5728\u5378 {container.container_no}\uff08{index}/{len(containers)}\uff09',
+                        completedCount=index - 1,
+                        progress=5 + round(finished_operations / total_operations * 90),
+                    )
+                    time.sleep(qc_sleep)
+                    container.status = STATUS_UNLOADED
+                    _finish_task(qc_task)
+                elif qc_task and qc_task.status != 'completed':
+                    _finish_task(qc_task)
+                finished_operations += 1
                 db.session.commit()
                 _update_workflow_state(
                     ship_id,
                     stage='\u5cb8\u6865\u5378\u8239',
                     message=f'\u5cb8\u6865\u5df2\u5378\u8239 {index}/{len(containers)} \u7bb1',
                     completedCount=index,
-                    progress=5 + round(index / len(containers) * 30),
+                    progress=5 + round(finished_operations / total_operations * 90),
                 )
-                time.sleep(qc_sleep)
+                qc_handoff_pos = qc_task.to_pos if qc_task else '\u6cca\u4f4d\u524d\u6cbf'
 
-            assignments, skipped = _build_slot_plan(containers, yards)
-            agv_sleep = _sleep_seconds(stage_minutes['agv'], len(containers), seconds_per_work_minute)
-            _update_workflow_state(
-                ship_id,
-                stage='AGV\u8f6c\u8fd0',
-                message='AGV \u5f00\u59cb\u5c06\u96c6\u88c5\u7bb1\u8f6c\u8fd0\u81f3\u5206\u914d\u5806\u573a',
-                skippedCount=len(skipped),
-                progress=38,
-            )
-            for index, container in enumerate(containers, start=1):
-                rec = assignments.get(container.id)
                 if not rec:
+                    _update_workflow_state(
+                        ship_id,
+                        stage='\u7b49\u5f85\u7bb1\u4f4d',
+                        message=f'{container.container_no} \u672a\u627e\u5230\u53ef\u7528\u7bb1\u4f4d\uff0c\u5df2\u505c\u5728\u6cca\u4f4d\u524d\u6cbf\u7b49\u5f85\u8c03\u5ea6',
+                        progress=5 + round(finished_operations / total_operations * 90),
+                    )
                     continue
-                task = _upsert_task(
-                    task_no=f'AGV-{ship.id}-{container.container_no}',
-                    task_type='AGV\u8f6c\u8fd0',
-                    container_id=container.id,
-                    from_pos='\u6cca\u4f4d\u524d\u6cbf',
-                    to_pos=rec['slotText'],
-                    remark='AGV\u6548\u7387 20 \u7bb1/h',
-                    status='in-progress',
-                    estimated_time=math.ceil(60 / EQUIPMENT_RATES['agv']),
-                    start_time=_format_dt(_now()),
+
+                agv_task_no = f'AGV-{ship.id}-{container.container_no}'
+                agv_task = Task.query.filter_by(task_no=agv_task_no).first()
+                agv_done = (
+                    container.status in (STATUS_TRANSFERRING, STATUS_IN_YARD) or
+                    (agv_task and agv_task.status == 'completed')
                 )
-                container.status = STATUS_TRANSFERRING
+                if not agv_done:
+                    _wait_for_buffer_capacity(
+                        ship_id,
+                        f"{rec['transferPoint']}\uff08AGV-\u573a\u6865\u4ea4\u63a5\u70b9\uff09",
+                        lambda yard_name=rec['yard']: _transfer_point_count(ship.id, yard_name),
+                        YARD_TRANSFER_CAPACITY,
+                        seconds_per_work_minute,
+                    )
+                    agv_task = _upsert_task(
+                        task_no=agv_task_no,
+                        task_type='AGV\u8f6c\u8fd0',
+                        container_id=container.id,
+                        from_pos=qc_handoff_pos or '\u6cca\u4f4d\u524d\u6cbf',
+                        to_pos=rec['transferPoint'],
+                        remark=f"\u6700\u7ec8\u7bb1\u4f4d {rec['slotText']}\uff1bAGV\u6548\u7387 20 \u7bb1/h",
+                        status='in-progress',
+                        estimated_time=math.ceil(60 / EQUIPMENT_RATES['agv']),
+                        start_time=_format_dt(_now()),
+                    )
+                    _assign_equipment(agv_task, TYPE_AGV)
+                    container.status = STATUS_TRANSFERRING
+                    db.session.commit()
+                    _update_workflow_state(
+                        ship_id,
+                        stage='AGV\u8f6c\u8fd0',
+                        message=f"AGV \u6b63\u5728\u5c06 {container.container_no} \u9001\u5f80 {rec['transferPoint']}",
+                        progress=5 + round(finished_operations / total_operations * 90),
+                    )
+                    time.sleep(agv_sleep)
+                    _finish_task(agv_task)
+                elif agv_task and agv_task.status != 'completed':
+                    _finish_task(agv_task)
+                finished_operations += 1
                 db.session.commit()
                 _update_workflow_state(
                     ship_id,
-                    message=f'AGV \u6b63\u5728\u8f6c\u8fd0 {index}/{len(containers)} \u7bb1',
-                    progress=38 + round(index / len(containers) * 30),
+                    stage='AGV\u8f6c\u8fd0',
+                    message=f"AGV \u5df2\u5c06 {container.container_no} \u9001\u8fbe {rec['transferPoint']}\uff0c\u573a\u6865\u53ef\u7acb\u5373\u63a5\u7ba1",
+                    progress=5 + round(finished_operations / total_operations * 90),
                 )
-                time.sleep(agv_sleep)
-                task.status = 'completed'
-                task.end_time = _format_dt(_now())
-                task.actual_time = task.estimated_time
-                db.session.commit()
 
-            yc_sleep = _sleep_seconds(stage_minutes['yardCrane'], len(containers), seconds_per_work_minute)
-            assigned_count = 0
-            _update_workflow_state(
-                ship_id,
-                stage='\u573a\u6865\u5165\u5806',
-                message='\u573a\u6865\u5f00\u59cb\u5c06\u96c6\u88c5\u7bb1\u653e\u5165\u5206\u914d\u7bb1\u4f4d',
-                progress=70,
-            )
-            for index, container in enumerate(containers, start=1):
-                rec = assignments.get(container.id)
-                if not rec:
-                    continue
-                task = _upsert_task(
-                    task_no=f'YC-{ship.id}-{container.container_no}',
-                    task_type='\u573a\u6865\u5165\u5806',
-                    container_id=container.id,
-                    from_pos=rec['slotText'],
-                    to_pos=rec['slotText'],
-                    remark='\u573a\u6865\u6548\u7387 25 \u7bb1/h',
-                    status='in-progress',
-                    estimated_time=math.ceil(60 / EQUIPMENT_RATES['yardCrane']),
-                    start_time=_format_dt(_now()),
-                )
-                time.sleep(yc_sleep)
-                container.yard = rec['yard']
-                container.area = rec['area']
-                container.column = rec['column']
-                container.layer = rec['layer']
-                container.status = STATUS_IN_YARD
-                task.status = 'completed'
-                task.end_time = _format_dt(_now())
-                task.actual_time = task.estimated_time
+                yc_task_no = f'YC-{ship.id}-{container.container_no}'
+                yc_task = Task.query.filter_by(task_no=yc_task_no).first()
+                if container.status != STATUS_IN_YARD:
+                    yc_task = _upsert_task(
+                        task_no=yc_task_no,
+                        task_type='\u573a\u6865\u5165\u5806',
+                        container_id=container.id,
+                        from_pos=rec['transferPoint'],
+                        to_pos=rec['slotText'],
+                        remark='\u573a\u6865\u6548\u7387 25 \u7bb1/h',
+                        status='in-progress',
+                        estimated_time=math.ceil(60 / EQUIPMENT_RATES['yardCrane']),
+                        start_time=_format_dt(_now()),
+                    )
+                    _assign_equipment(yc_task, TYPE_YARD_CRANE)
+                    db.session.commit()
+                    _update_workflow_state(
+                        ship_id,
+                        stage='\u573a\u6865\u5165\u5806',
+                        message=f"\u573a\u6865\u6b63\u5728\u4ece {rec['transferPoint']} \u6293\u53d6 {container.container_no} \u653e\u5165 {rec['slotText']}",
+                        progress=5 + round(finished_operations / total_operations * 90),
+                    )
+                    time.sleep(yc_sleep)
+                    container.yard = rec['yard']
+                    container.area = rec['area']
+                    container.column = rec['column']
+                    container.layer = rec['layer']
+                    container.status = STATUS_IN_YARD
+                    _finish_task(yc_task)
+                elif yc_task and yc_task.status != 'completed':
+                    _finish_task(yc_task)
+                finished_operations += 1
                 assigned_count += 1
                 db.session.commit()
                 _update_workflow_state(
                     ship_id,
                     message=f'\u573a\u6865\u5df2\u5165\u5806 {assigned_count}/{len(assignments)} \u7bb1',
                     assignedCount=assigned_count,
-                    progress=70 + round(index / len(containers) * 25),
+                    progress=5 + round(finished_operations / total_operations * 90),
                 )
 
             released_berth = ship.berth

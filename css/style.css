@@ -632,9 +632,10 @@ th { background: #e8f0f8; color: #1a3a5c; }
 .home-terminal-map-wrap {
     position: relative;
     overflow: hidden;
-    border-radius: 14px;
-    border: 1px solid #d5e4f3;
-    background: #f8fcff;
+    border-radius: 10px;
+    border: 1px solid #24384d;
+    background: #071421;
+    box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.08), 0 18px 38px rgba(15, 23, 42, 0.18);
     width: 100%;
     min-width: 0;
 }
@@ -642,6 +643,7 @@ th { background: #e8f0f8; color: #1a3a5c; }
     display: block;
     width: 100%;
     height: auto;
+    min-height: 660px;
 }
 .home-map-tooltip {
     position: absolute;
@@ -676,6 +678,8 @@ th { background: #e8f0f8; color: #1a3a5c; }
 .legend-run { background: #fbbf24; }
 .legend-done { background: #22c55e; }
 .legend-ship { background: #3b82f6; }
+.legend-agv { background: #f97316; }
+.legend-crane { background: #0f766e; }
 .home-yard-preview {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
