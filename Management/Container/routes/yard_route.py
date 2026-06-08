@@ -38,10 +38,17 @@ def _slot_occupied(yard_name, area, column, layer, except_container_id=None):
     return query.first()
 
 
+def is_dangerous_yard(yard):
+    text = (yard.yard_name or '') + (yard.usage_type or '')
+    return '\u5371\u9669' in text
+
+
 def _yard_matches_container(yard, container):
     name = (yard.yard_name or '') + (yard.usage_type or '')
     if container.is_dangerous:
-        return '\u5371\u9669' in name
+        return is_dangerous_yard(yard)
+    if is_dangerous_yard(yard):
+        return False
     if container.is_refrigerated:
         return '\u51b7\u85cf' in name or '\u51b7' in name
     if container.is_full:
@@ -53,10 +60,14 @@ def _official_yard_names():
     return {yard.yard_name for yard in Yard.query.all()}
 
 
-def _find_best_slot(container, yards, occupied, ship_plan_counts):
+def find_best_slot_for_container(container, yards, occupied, ship_plan_counts):
     candidates = []
     for yard in yards:
         if yard.status not in ('\u542f\u7528', 'active'):
+            continue
+        if container.is_dangerous and not is_dangerous_yard(yard):
+            continue
+        if not container.is_dangerous and is_dangerous_yard(yard):
             continue
         used = sum(1 for key in occupied if key[0] == yard.yard_name)
         if used >= yard.total_capacity:
@@ -85,6 +96,10 @@ def _find_best_slot(container, yards, occupied, ship_plan_counts):
         return None
     candidates.sort(key=lambda item: (-item[0], item[1].id, item[2], item[3], item[4]))
     return candidates[0][1:]
+
+
+def _find_best_slot(container, yards, occupied, ship_plan_counts):
+    return find_best_slot_for_container(container, yards, occupied, ship_plan_counts)
 
 
 @yard_bp.route('', methods=['GET'])
@@ -190,6 +205,10 @@ def assign_container():
         return jsonify({"message": "\u5806\u573a\u4e0d\u5b58\u5728"}), 404
     if yard.status not in ('\u542f\u7528', 'active'):
         return jsonify({"message": "\u5806\u573a\u672a\u542f\u7528"}), 400
+    if container.is_dangerous and not is_dangerous_yard(yard):
+        return jsonify({"message": "\u5371\u9669\u54c1\u96c6\u88c5\u7bb1\u5fc5\u987b\u5206\u914d\u5230\u5371\u9669\u54c1\u5806\u573a"}), 400
+    if not container.is_dangerous and is_dangerous_yard(yard):
+        return jsonify({"message": "\u5371\u9669\u54c1\u5806\u573a\u4ec5\u7528\u4e8e\u5b58\u653e\u5371\u9669\u54c1\u96c6\u88c5\u7bb1"}), 400
 
     column = int(column)
     layer = int(layer)

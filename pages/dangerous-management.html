@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTMS · 危险品管理</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+</head>
+<body data-auth-page="dangerous">
+    <div id="app" class="module-shell">
+        <header class="app-header">
+            <a class="back-link" href="../index.html">← 返回主页</a>
+            <div>
+                <h1>危险品管理</h1>
+                <p>危险品集装箱识别、堆场合规校验与箱位调整</p>
+            </div>
+            <span class="time-display">{{ currentTime }}</span>
+        </header>
+
+        <main class="main-content">
+            <section v-if="message" class="auto-berth-message">{{ message }}</section>
+
+            <section class="home-stat-grid">
+                <article class="home-stat-card">
+                    <span>危险品箱</span>
+                    <strong>{{ stats.dangerousCount || 0 }}</strong>
+                    <small>已标记危险品</small>
+                </article>
+                <article class="home-stat-card">
+                    <span>合规存放</span>
+                    <strong>{{ stats.compliantCount || 0 }}</strong>
+                    <small>位于危险品堆场</small>
+                </article>
+                <article class="home-stat-card">
+                    <span>待调整</span>
+                    <strong>{{ stats.violationCount || 0 }}</strong>
+                    <small>不在危险品堆场</small>
+                </article>
+                <article class="home-stat-card">
+                    <span>危险品堆场</span>
+                    <strong>{{ stats.dangerousYardCount || 0 }}</strong>
+                    <small>按名称/用途识别</small>
+                </article>
+            </section>
+
+            <section class="toolbar">
+                <button class="btn btn-primary" :disabled="!stats.violationCount" @click="reassign">一键调整违规箱位</button>
+                <button class="btn btn-outline" @click="refreshAll">刷新</button>
+                <span class="empty-note">危险品箱只能进入名称或用途含“危险”的堆场。</span>
+            </section>
+
+            <section class="grid-two import-grid">
+                <article class="card">
+                    <div class="card-header"><strong>危险品堆场</strong></div>
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr><th>堆场</th><th>用途</th><th>容量</th><th>使用率</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="yard in dangerousYards" :key="yard.id">
+                                    <td><strong>{{ yard.yardName }}</strong></td>
+                                    <td>{{ yard.usageType }}</td>
+                                    <td>{{ yard.usedCapacity }} / {{ yard.totalCapacity }}</td>
+                                    <td>{{ yard.usageRate }}%</td>
+                                </tr>
+                                <tr v-if="dangerousYards.length === 0">
+                                    <td colspan="4" class="empty-cell">暂无危险品堆场</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+
+                <article class="card">
+                    <div class="card-header"><strong>违规箱位</strong></div>
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr><th>箱号</th><th>当前位置</th><th>状态</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="item in violations" :key="item.id">
+                                    <td><strong>{{ item.containerNo }}</strong></td>
+                                    <td>{{ formatSlot(item) }}</td>
+                                    <td><span class="tag tag-orange">需调整</span></td>
+                                </tr>
+                                <tr v-if="violations.length === 0">
+                                    <td colspan="3" class="empty-cell">暂无违规箱位</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+            </section>
+
+            <section class="card">
+                <div class="card-header">
+                    <strong>危险品集装箱清单</strong>
+                    <span>共 {{ containers.length }} 个</span>
+                </div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>箱号</th>
+                                <th>箱型</th>
+                                <th>装载</th>
+                                <th>冷藏</th>
+                                <th>当前位置</th>
+                                <th>状态</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="item in containers" :key="item.id">
+                                <td><strong>{{ item.containerNo }}</strong></td>
+                                <td>{{ item.containerType }}</td>
+                                <td>{{ item.loadStatus }}</td>
+                                <td>{{ item.isReefer ? '是' : '否' }}</td>
+                                <td>{{ formatSlot(item) }}</td>
+                                <td><span class="tag" :class="isViolation(item) ? 'tag-orange' : 'tag-green'">{{ isViolation(item) ? '待调整' : '合规' }}</span></td>
+                            </tr>
+                            <tr v-if="containers.length === 0">
+                                <td colspan="6" class="empty-cell">暂无危险品集装箱</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+    <script src="../js/auth-guard.js"></script>
+    <script src="../js/dangerous-management.js"></script>
+</body>
+</html>

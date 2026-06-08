@@ -10,6 +10,8 @@
     'terminal-operations': '码头作业模块',
     import: '进口闭环管理',
     equipment: '设备管理',
+    dangerous: '危险品管理',
+    finance: '财务计费',
   };
 
   const hrefPages = [
@@ -20,6 +22,8 @@
     ['terminal-operations.html', 'terminal-operations'],
     ['import-lifecycle.html', 'import'],
     ['equipment-management.html', 'equipment'],
+    ['dangerous-management.html', 'dangerous'],
+    ['finance-billing.html', 'finance'],
   ];
 
   function pageFromHref(href) {

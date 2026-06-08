@@ -506,3 +506,39 @@ class ExceptionRecord(db.Model):
             "createdAt": self.created_at,
             "resolvedAt": self.resolved_at,
         }
+
+
+class BillingRecord(db.Model):
+    __tablename__ = 'billing_record'
+
+    id = db.Column(db.Integer, primary_key=True)
+    bill_no = db.Column(db.String(40), unique=True, nullable=False)
+    container_id = db.Column(db.Integer)
+    customer = db.Column(db.String(80))
+    charge_type = db.Column(db.String(30), default='堆存费')
+    amount = db.Column(db.Float, default=0)
+    status = db.Column(db.String(20), default='未结算')
+    generated_at = db.Column(db.String(30))
+    settled_at = db.Column(db.String(30))
+    remark = db.Column(db.String(200))
+
+    @property
+    def container(self):
+        return Container.query.get(self.container_id) if self.container_id else None
+
+    def to_dict(self):
+        container = self.container
+        return {
+            "id": self.id,
+            "billNo": self.bill_no,
+            "containerId": self.container_id,
+            "containerNo": container.container_no if container else '',
+            "customer": self.customer or '',
+            "chargeType": self.charge_type,
+            "amount": round(float(self.amount or 0), 2),
+            "status": self.status,
+            "generatedAt": self.generated_at,
+            "settledAt": self.settled_at,
+            "remark": self.remark or '',
+            "container": container.to_dict() if container else None,
+        }

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTMS · 财务计费</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+</head>
+<body data-auth-page="finance">
+    <div id="app" class="module-shell">
+        <header class="app-header">
+            <a class="back-link" href="../index.html">← 返回主页</a>
+            <div>
+                <h1>财务计费</h1>
+                <p>堆存费、危险品附加费与账单结算管理</p>
+            </div>
+            <span class="time-display">{{ currentTime }}</span>
+        </header>
+
+        <main class="main-content">
+            <section v-if="message" class="auto-berth-message">{{ message }}</section>
+
+            <section class="home-stat-grid">
+                <article class="home-stat-card">
+                    <span>账单总额</span>
+                    <strong>¥{{ summary.totalAmount || 0 }}</strong>
+                    <small>全部已生成账单</small>
+                </article>
+                <article class="home-stat-card">
+                    <span>已结算</span>
+                    <strong>¥{{ summary.settledAmount || 0 }}</strong>
+                    <small>{{ summary.billCount || 0 }} 张账单</small>
+                </article>
+                <article class="home-stat-card">
+                    <span>待收款</span>
+                    <strong>¥{{ summary.pendingAmount || 0 }}</strong>
+                    <small>{{ summary.pendingCount || 0 }} 张未结算</small>
+                </article>
+            </section>
+
+            <section class="toolbar">
+                <select v-model="billForm.containerId">
+                    <option value="">选择集装箱</option>
+                    <option v-for="item in containers" :key="item.id" :value="item.id">{{ item.containerNo }} · {{ item.status }}</option>
+                </select>
+                <select v-model="billForm.chargeType">
+                    <option>堆存费</option>
+                    <option>危险品附加费</option>
+                    <option>冷藏用电费</option>
+                    <option>闸口服务费</option>
+                </select>
+                <input v-model.number="billForm.amount" type="number" min="0" step="0.01" placeholder="金额，留空自动估算">
+                <input v-model.trim="billForm.customer" placeholder="客户名称，留空自动匹配">
+                <button class="btn btn-primary" @click="createBill">生成账单</button>
+                <button class="btn btn-outline" @click="refreshAll">刷新</button>
+            </section>
+
+            <section class="card">
+                <div class="card-header">
+                    <strong>账单明细</strong>
+                    <span>共 {{ bills.length }} 条</span>
+                </div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>账单号</th>
+                                <th>箱号</th>
+                                <th>客户</th>
+                                <th>费用类型</th>
+                                <th>金额</th>
+                                <th>状态</th>
+                                <th>生成时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="bill in bills" :key="bill.id">
+                                <td><strong>{{ bill.billNo }}</strong></td>
+                                <td>{{ bill.containerNo || '-' }}</td>
+                                <td>{{ bill.customer || '-' }}</td>
+                                <td>{{ bill.chargeType }}</td>
+                                <td>¥{{ bill.amount }}</td>
+                                <td><span class="tag" :class="bill.status === '已结算' ? 'tag-green' : 'tag-orange'">{{ bill.status }}</span></td>
+                                <td>{{ bill.generatedAt }}</td>
+                                <td class="actions">
+                                    <button class="btn btn-primary btn-sm" :disabled="bill.status === '已结算'" @click="settleBill(bill)">结算</button>
+                                </td>
+                            </tr>
+                            <tr v-if="bills.length === 0">
+                                <td colspan="8" class="empty-cell">暂无账单</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+    <script src="../js/auth-guard.js"></script>
+    <script src="../js/finance-billing.js"></script>
+</body>
+</html>

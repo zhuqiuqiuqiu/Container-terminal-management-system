@@ -1,7 +1,8 @@
 from flask import Blueprint, jsonify, request
 from sqlalchemy.exc import IntegrityError
 
-from Container.models.container_model import Container, db
+from Container.models.container_model import Container, Yard, db
+from Container.routes.yard_route import is_dangerous_yard
 
 
 '''把所有操作变成HTTP接口 -API'''
@@ -19,6 +20,19 @@ STATUS_FLOW = {
     "\u5728\u5806": "\u5f85\u88c5\u8239",
     "\u5f85\u88c5\u8239": "\u79bb\u6e2f",
 }
+
+
+def _validate_dangerous_yard(container):
+    if not container.yard:
+        return None
+    yard = Yard.query.filter_by(yard_name=container.yard).first()
+    if not yard:
+        return None
+    if container.is_dangerous and not is_dangerous_yard(yard):
+        return '\u5371\u9669\u54c1\u96c6\u88c5\u7bb1\u5fc5\u987b\u5b58\u653e\u5728\u5371\u9669\u54c1\u5806\u573a'
+    if not container.is_dangerous and is_dangerous_yard(yard):
+        return '\u5371\u9669\u54c1\u5806\u573a\u4ec5\u7528\u4e8e\u5b58\u653e\u5371\u9669\u54c1\u96c6\u88c5\u7bb1'
+    return None
 
 
 @container_bp.route('/containers', methods=['POST'])
@@ -52,6 +66,10 @@ def create_container():
         appointment_status=data.get('appointment_status') or data.get('appointmentStatus') or '\u672a\u9884\u7ea6',
         damage_status=data.get('damage_status') or data.get('damageStatus') or '\u6b63\u5e38',
     )
+
+    error = _validate_dangerous_yard(container)
+    if error:
+        return jsonify({"message": error}), 400
 
     db.session.add(container)
     try:
@@ -102,6 +120,9 @@ def update_container(id):
     container.customs_status = data.get('customs_status') or data.get('customsStatus') or container.customs_status
     container.appointment_status = data.get('appointment_status') or data.get('appointmentStatus') or container.appointment_status
     container.damage_status = data.get('damage_status') or data.get('damageStatus') or container.damage_status
+    error = _validate_dangerous_yard(container)
+    if error:
+        return jsonify({"message": error}), 400
 
     try:
         db.session.commit()

@@ -12,9 +12,11 @@ for import_dir in (CONTAINER_DIR, MANAGEMENT_DIR):
         sys.path.insert(0, str(import_dir))
 
 from config import Config
-from Container.models.container_model import Container, Equipment, Ship, Task, User, Yard, db
+from Container.models.container_model import BillingRecord, Container, Equipment, Ship, Task, User, Yard, db
 from routes.container_route import container_bp
+from routes.dangerous_route import dangerous_bp
 from routes.equipment_route import equipment_bp
+from routes.finance_route import finance_bp
 from routes.import_lifecycle_route import import_bp
 from routes.ship_route import ship_bp
 from routes.task_route import task_bp
@@ -27,10 +29,12 @@ STATUS_DEPARTED = '\u5df2\u79bb\u6e2f'
 ROLE_ADMIN = 'admin'
 ROLE_DISPATCHER = 'dispatcher'
 ROLE_CUSTOMER = 'operator'
+ROLE_FINANCE = 'finance'
 ROLE_LABELS = {
     ROLE_ADMIN: '\u7ba1\u7406\u5458',
     ROLE_DISPATCHER: '\u8c03\u5ea6\u5458',
     ROLE_CUSTOMER: '\u5ba2\u6237',
+    ROLE_FINANCE: '\u8d22\u52a1\u4eba\u5458',
 }
 ROLE_ALIASES = {
     '\u8d85\u7ea7\u7ba1\u7406\u5458': ROLE_ADMIN,
@@ -44,11 +48,15 @@ ROLE_ALIASES = {
     '\u5ba2\u6237': ROLE_CUSTOMER,
     'customer': ROLE_CUSTOMER,
     'client': ROLE_CUSTOMER,
+    '\u8d22\u52a1': ROLE_FINANCE,
+    '\u8d22\u52a1\u4eba\u5458': ROLE_FINANCE,
+    'finance': ROLE_FINANCE,
 }
 ROLE_PAGE_ACCESS = {
-    ROLE_ADMIN: {'home', 'container', 'yard', 'ship', 'terminal-operations', 'import', 'equipment'},
-    ROLE_DISPATCHER: {'home', 'container', 'ship', 'terminal-operations', 'import', 'equipment'},
+    ROLE_ADMIN: {'home', 'container', 'yard', 'ship', 'terminal-operations', 'import', 'equipment', 'finance', 'dangerous'},
+    ROLE_DISPATCHER: {'home', 'container', 'ship', 'terminal-operations', 'import', 'equipment', 'dangerous'},
     ROLE_CUSTOMER: {'home', 'container', 'import'},
+    ROLE_FINANCE: {'home', 'container', 'finance'},
 }
 ROLE_PERMISSIONS = {
     ROLE_ADMIN: ['*'],
@@ -64,6 +72,8 @@ ROLE_PERMISSIONS = {
         'equipment:write',
         'import:read',
         'import:operate',
+        'dangerous:read',
+        'dangerous:write',
     ],
     ROLE_CUSTOMER: [
         'dashboard:read',
@@ -76,11 +86,18 @@ ROLE_PERMISSIONS = {
         'appointment:write',
         'exception:write',
     ],
+    ROLE_FINANCE: [
+        'dashboard:read',
+        'container:read',
+        'finance:read',
+        'finance:write',
+    ],
 }
 DEFAULT_USERS = [
     ('admin01', 'admin123', ROLE_ADMIN),
     ('dispatcher01', 'disp123', ROLE_DISPATCHER),
     ('customer01', 'cust123', ROLE_CUSTOMER),
+    ('finance01', 'fin123', ROLE_FINANCE),
 ]
 
 
@@ -113,6 +130,8 @@ def _page_key_from_path(path):
         '/pages/terminal-operations.html': 'terminal-operations',
         '/pages/import-lifecycle.html': 'import',
         '/pages/equipment-management.html': 'equipment',
+        '/pages/finance-billing.html': 'finance',
+        '/pages/dangerous-management.html': 'dangerous',
     }
     return mapping.get(path)
 
@@ -161,6 +180,10 @@ def _path_permission(path, method):
         if path == '/api/import/exceptions' and method == 'POST':
             return 'exception:write'
         return 'import:operate'
+    if path.startswith('/api/finance'):
+        return 'finance:read' if method == 'GET' else 'finance:write'
+    if path.startswith('/api/dangerous'):
+        return 'dangerous:read' if method == 'GET' else 'dangerous:write'
     return None
 
 
@@ -172,7 +195,9 @@ def create_app():
 
     db.init_app(app)
     app.register_blueprint(container_bp)
+    app.register_blueprint(dangerous_bp)
     app.register_blueprint(equipment_bp)
+    app.register_blueprint(finance_bp)
     app.register_blueprint(ship_bp)
     app.register_blueprint(task_bp)
     app.register_blueprint(yard_bp)
@@ -215,6 +240,8 @@ def create_app():
             request.path.startswith('/tasks') or
             request.path.startswith('/equipment') or
             request.path.startswith('/api/import') or
+            request.path.startswith('/api/finance') or
+            request.path.startswith('/api/dangerous') or
             request.path.startswith('/api/dashboard')
         ):
             return jsonify({"message": "\u8bf7\u5148\u767b\u5f55"}), 401
@@ -364,6 +391,7 @@ def create_app():
         ensure_ship_schema()
         ensure_task_schema()
         ensure_equipment_schema()
+        ensure_user_schema()
         seed_data()
 
     return app
@@ -386,7 +414,11 @@ def seed_data():
             Yard(yard_name='\u5806\u573aA', usage_type='\u8fdb\u53e3\u7bb1', code='Y-A'),
             Yard(yard_name='\u5806\u573aB', usage_type='\u51fa\u53e3\u7bb1', code='Y-B'),
             Yard(yard_name='\u5806\u573aC', usage_type='\u51b7\u85cf\u7bb1', code='Y-C'),
+            Yard(yard_name='\u5371\u9669\u54c1\u5806\u573aD', usage_type='\u5371\u9669\u54c1\u5806\u573a', code='Y-DG'),
         ])
+        db.session.commit()
+    elif not Yard.query.filter((Yard.yard_name.like('%\u5371\u9669%')) | (Yard.usage_type.like('%\u5371\u9669%'))).first():
+        db.session.add(Yard(yard_name='\u5371\u9669\u54c1\u5806\u573aD', usage_type='\u5371\u9669\u54c1\u5806\u573a', code='Y-DG'))
         db.session.commit()
 
     if Ship.query.first():
@@ -457,6 +489,56 @@ def seed_data():
             Equipment(code='YC01', name='\u573a\u68651', equipment_type='\u573a\u6865', status='\u7a7a\u95f2', location='\u5806\u573aA', efficiency=25, created_at=now, updated_at=now),
             Equipment(code='YC02', name='\u573a\u68652', equipment_type='\u573a\u6865', status='\u6545\u969c', location='\u5806\u573aB', efficiency=25, remark='\u6db2\u538b\u7cfb\u7edf\u5f85\u68c0\u4fee', created_at=now, updated_at=now),
         ])
+        db.session.commit()
+
+    ensure_dangerous_container_locations()
+
+
+def ensure_dangerous_container_locations():
+    dangerous_yards = [
+        yard for yard in Yard.query.order_by(Yard.id).all()
+        if '\u5371\u9669' in ((yard.yard_name or '') + (yard.usage_type or ''))
+    ]
+    if not dangerous_yards:
+        return
+
+    occupied = {
+        (c.yard, c.area, c.column, c.layer)
+        for c in Container.query.filter(Container.status != '\u79bb\u6e2f').all()
+        if c.yard and c.area and c.column and c.layer
+    }
+    changed = False
+    for container in Container.query.filter_by(is_dangerous=True).all():
+        yard_text = (container.yard or '')
+        yard = Yard.query.filter_by(yard_name=container.yard).first() if container.yard else None
+        if yard:
+            yard_text = (yard.yard_name or '') + (yard.usage_type or '')
+        if '\u5371\u9669' in yard_text and container.area and container.column and container.layer:
+            continue
+
+        target = None
+        for danger_yard in dangerous_yards:
+            for area in danger_yard.zone_list:
+                for column in range(1, danger_yard.total_rows + 1):
+                    for layer in range(1, danger_yard.total_tiers + 1):
+                        key = (danger_yard.yard_name, area, column, layer)
+                        if key not in occupied:
+                            target = key
+                            break
+                    if target:
+                        break
+                if target:
+                    break
+            if target:
+                break
+        if not target:
+            continue
+        container.yard, container.area, container.column, container.layer = target
+        container.status = '\u5806\u573a\u5b58\u50a8'
+        occupied.add(target)
+        changed = True
+
+    if changed:
         db.session.commit()
 
 
@@ -548,6 +630,38 @@ def ensure_equipment_schema():
                                 "ELSE 'AGV' END "
                                 "WHERE equipment_type IS NULL OR equipment_type = '' OR equipment_type = '\u901a\u7528\u8bbe\u5907'"))
         db.session.execute(text("UPDATE equipment SET status = '\u7a7a\u95f2' WHERE status IS NULL OR status = ''"))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
+def ensure_user_schema():
+    try:
+        row = db.session.execute(text("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'user'")).fetchone()
+        create_sql = row[0] if row else ''
+        if create_sql and 'CHECK' in create_sql.upper() and "'finance'" not in create_sql:
+            db.session.execute(text("ALTER TABLE user RENAME TO user_old_role_migration"))
+            db.session.execute(text(
+                "CREATE TABLE user ("
+                "id INTEGER PRIMARY KEY, "
+                "username VARCHAR(50) UNIQUE NOT NULL, "
+                "password VARCHAR(100) NOT NULL, "
+                "role VARCHAR(20) NOT NULL CHECK (role IN ('admin', 'dispatcher', 'operator', 'finance')), "
+                "last_login_at VARCHAR(30)"
+                ")"
+            ))
+            db.session.execute(text(
+                "INSERT INTO user (id, username, password, role, last_login_at) "
+                "SELECT id, username, password, "
+                "CASE "
+                "WHEN role IN ('admin', 'dispatcher', 'operator', 'finance') THEN role "
+                "WHEN role IN ('\u7ba1\u7406\u5458', '\u8d85\u7ea7\u7ba1\u7406\u5458') THEN 'admin' "
+                "WHEN role IN ('\u8c03\u5ea6\u5458', '\u64cd\u4f5c\u5458') THEN 'dispatcher' "
+                "WHEN role IN ('\u8d22\u52a1', '\u8d22\u52a1\u4eba\u5458') THEN 'finance' "
+                "ELSE 'operator' END, "
+                "last_login_at FROM user_old_role_migration"
+            ))
+            db.session.execute(text("DROP TABLE user_old_role_migration"))
         db.session.commit()
     except Exception:
         db.session.rollback()

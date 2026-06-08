@@ -420,6 +420,8 @@ def _yard_matches_container(yard, container):
     text = (yard.yard_name or '') + (yard.usage_type or '')
     if container.is_dangerous:
         return '\u5371\u9669' in text
+    if '\u5371\u9669' in text:
+        return False
     if container.is_refrigerated:
         return '\u51b7\u85cf' in text or '\u51b7' in text
     if container.is_full:
@@ -431,6 +433,11 @@ def _find_best_slot(container, yards, occupied, ship_plan_counts):
     candidates = []
     for yard in yards:
         if yard.status not in ('\u542f\u7528', 'active'):
+            continue
+        yard_text = (yard.yard_name or '') + (yard.usage_type or '')
+        if container.is_dangerous and '\u5371\u9669' not in yard_text:
+            continue
+        if not container.is_dangerous and '\u5371\u9669' in yard_text:
             continue
         used = sum(1 for key in occupied if key[0] == yard.yard_name)
         if used >= yard.total_capacity:
