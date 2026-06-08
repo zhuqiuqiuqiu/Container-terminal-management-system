@@ -3,6 +3,7 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request
 
 from Container.models.container_model import Container, Equipment, Task, db
+from Container.routes.task_rules import reconcile_completed_stage_tasks, sync_container_after_task, validate_task_transition
 
 
 task_bp = Blueprint('task_bp', __name__, url_prefix='/tasks')
@@ -72,6 +73,9 @@ def _normalize_transfer_flow(payload):
 @task_bp.route('', methods=['GET'])
 def list_tasks():
     tasks = Task.query.order_by(Task.id.desc()).all()
+    if reconcile_completed_stage_tasks(tasks):
+        db.session.commit()
+        tasks = Task.query.order_by(Task.id.desc()).all()
     return jsonify([task.to_dict() for task in tasks])
 
 
@@ -91,7 +95,13 @@ def create_task():
         updated_at=now,
         **payload,
     )
+    error = validate_task_transition(task)
+    if error:
+        return jsonify({"message": error}), 400
     db.session.add(task)
+    if task.normalized_status() == 'completed':
+        task.end_time = task.end_time or task.updated_at
+        sync_container_after_task(task)
     db.session.commit()
     return jsonify({"message": "\u65b0\u589e\u4f5c\u4e1a\u5355\u6210\u529f", "data": task.to_dict()}), 201
 
@@ -111,6 +121,13 @@ def update_task(task_id):
     task.priority = payload['priority']
     task.container_id = container.id if container else task.container_id
     task.updated_at = _now()
+    error = validate_task_transition(task)
+    if error:
+        db.session.rollback()
+        return jsonify({"message": error}), 400
+    if task.normalized_status() == 'completed':
+        task.end_time = task.end_time or task.updated_at
+        sync_container_after_task(task)
     db.session.commit()
     return jsonify({"message": "\u4fee\u6539\u4f5c\u4e1a\u5355\u6210\u529f", "data": task.to_dict()})
 
@@ -124,7 +141,11 @@ def next_status(task_id):
         '\u672a\u5f00\u59cb': 'in-progress',
         '\u8fdb\u884c\u4e2d': 'completed',
     }
-    task.status = flow.get(task.status, task.status)
+    next_task_status = flow.get(task.status, task.status)
+    error = validate_task_transition(task, next_task_status)
+    if error:
+        return jsonify({"message": error}), 400
+    task.status = next_task_status
     task.updated_at = _now()
     if task.status == 'in-progress' and not task.start_time:
         task.start_time = task.updated_at
@@ -135,6 +156,7 @@ def next_status(task_id):
             equipment.status = '\u7a7a\u95f2'
             equipment.current_task_id = None
             equipment.updated_at = task.updated_at
+        sync_container_after_task(task)
     db.session.commit()
     return jsonify({"message": "\u4efb\u52a1\u72b6\u6001\u5df2\u66f4\u65b0", "data": task.to_dict()})
 

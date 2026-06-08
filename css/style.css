@@ -1230,8 +1230,49 @@ tr.selected {
     height: 320px;
 }
 
+.import-shell .main-content {
+    display: grid;
+    gap: 16px;
+}
+.import-tabs {
+    margin-bottom: 0;
+}
+.import-grid {
+    align-items: start;
+}
+.import-form {
+    margin-top: 4px;
+}
+.import-form label {
+    display: grid;
+    gap: 6px;
+    color: var(--text-light);
+    font-size: 13px;
+}
+.import-form input,
+.import-form select {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: var(--text);
+    background: #fff;
+    font: inherit;
+}
+.import-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+}
+.import-shell .table-wrapper {
+    max-height: 560px;
+    overflow: auto;
+}
+.import-shell .actions {
+    min-width: 220px;
+}
+
 @media (max-width: 1200px) {
-    .grid-two, .loading-layout {
+    .grid-two, .loading-layout, .import-grid {
         grid-template-columns: 1fr;
     }
     .loading-kpis, .berth-grid {

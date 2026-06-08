@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTMS - 集装箱进口闭环管理</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+</head>
+<body data-auth-page="import">
+    <div id="app" class="module-shell import-shell">
+        <header class="app-header">
+            <a class="back-link" href="../index.html">返回主页</a>
+            <div>
+                <h1>集装箱进口闭环管理</h1>
+                <p>海关放行、提箱预约、闸口进出、堆场提箱与异常闭环</p>
+            </div>
+            <span class="time-display">{{ currentTime }}</span>
+        </header>
+
+        <main class="main-content">
+            <section class="operations-kpis">
+                <article class="operation-kpi">
+                    <span>在场可处理箱</span>
+                    <strong>{{ stats.inYard || 0 }}</strong>
+                    <small>堆场存储 / 等待提箱</small>
+                </article>
+                <article class="operation-kpi">
+                    <span>已放行箱</span>
+                    <strong>{{ stats.customsReleased || 0 }}</strong>
+                    <small>海关/商检可提</small>
+                </article>
+                <article class="operation-kpi">
+                    <span>有效预约</span>
+                    <strong>{{ stats.activeAppointments || 0 }}</strong>
+                    <small>未完成预约单</small>
+                </article>
+                <article class="operation-kpi">
+                    <span>未关闭异常</span>
+                    <strong>{{ stats.openExceptions || 0 }}</strong>
+                    <small>需要人工处理</small>
+                </article>
+            </section>
+
+            <section v-if="message" class="auto-berth-message">{{ message }}</section>
+
+            <section class="ship-tabs import-tabs">
+                <button class="tab-btn" :class="{ active: currentView === 'release' }" @click="currentView = 'release'">放行与预约</button>
+                <button class="tab-btn" :class="{ active: currentView === 'gate' }" @click="currentView = 'gate'">闸口作业</button>
+                <button class="tab-btn" :class="{ active: currentView === 'exceptions' }" @click="currentView = 'exceptions'">异常闭环</button>
+                <button class="tab-btn" :class="{ active: currentView === 'records' }" @click="currentView = 'records'">作业记录</button>
+            </section>
+
+            <section v-if="currentView === 'release'" class="grid-two import-grid">
+                <article class="card">
+                    <div class="card-header">
+                        <strong>待放行/可预约集装箱</strong>
+                        <button class="btn btn-outline btn-sm" @click="refreshAll">刷新</button>
+                    </div>
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>箱号</th>
+                                    <th>状态</th>
+                                    <th>海关</th>
+                                    <th>预约</th>
+                                    <th>堆场位置</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="item in pickupReadyContainers" :key="item.id">
+                                    <td><strong>{{ item.containerNo }}</strong></td>
+                                    <td><span class="tag tag-green">{{ item.status }}</span></td>
+                                    <td><span class="tag" :class="item.customsStatus === '已放行' ? 'tag-green' : 'tag-orange'">{{ item.customsStatus }}</span></td>
+                                    <td>{{ item.appointmentStatus }}</td>
+                                    <td>{{ formatSlot(item) }}</td>
+                                    <td class="actions">
+                                        <button class="btn btn-primary btn-sm" :disabled="item.customsStatus === '已放行'" @click="releaseContainer(item)">放行</button>
+                                        <button class="btn btn-outline btn-sm" :disabled="item.customsStatus !== '已放行'" @click="selectForAppointment(item)">预约</button>
+                                    </td>
+                                </tr>
+                                <tr v-if="pickupReadyContainers.length === 0">
+                                    <td colspan="6" class="empty-cell">暂无可处理集装箱</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+
+                <article class="card">
+                    <div class="card-header"><strong>创建提箱预约</strong></div>
+                    <form class="form-grid import-form" @submit.prevent="createAppointment">
+                        <label>箱号
+                            <input v-model.trim="appointmentForm.containerNo" required placeholder="选择或输入箱号">
+                        </label>
+                        <label>车牌号
+                            <input v-model.trim="appointmentForm.truckPlate" required placeholder="沪A12345">
+                        </label>
+                        <label>司机
+                            <input v-model.trim="appointmentForm.driverName" placeholder="司机姓名">
+                        </label>
+                        <label>联系电话
+                            <input v-model.trim="appointmentForm.driverPhone" placeholder="手机号">
+                        </label>
+                        <label>预约开始
+                            <input v-model.trim="appointmentForm.timeWindowStart" required placeholder="2026-06-02 14:00">
+                        </label>
+                        <label>预约结束
+                            <input v-model.trim="appointmentForm.timeWindowEnd" required placeholder="2026-06-02 16:00">
+                        </label>
+                        <label>客户/货代
+                            <input v-model.trim="appointmentForm.customer" placeholder="客户名称">
+                        </label>
+                        <label>备注
+                            <input v-model.trim="appointmentForm.remark" placeholder="特殊说明">
+                        </label>
+                        <div class="modal-actions import-actions">
+                            <button class="btn btn-primary" type="submit">确认预约</button>
+                            <button class="btn btn-outline" type="button" @click="resetAppointmentForm">清空</button>
+                        </div>
+                    </form>
+                </article>
+            </section>
+
+            <section v-if="currentView === 'gate'" class="grid-two import-grid">
+                <article class="card">
+                    <div class="card-header"><strong>预约作业队列</strong></div>
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>预约号</th>
+                                    <th>箱号</th>
+                                    <th>车牌</th>
+                                    <th>时间窗</th>
+                                    <th>状态</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="item in activeAppointments" :key="item.id">
+                                    <td>{{ item.appointmentNo }}</td>
+                                    <td><strong>{{ item.containerNo }}</strong></td>
+                                    <td>{{ item.truckPlate }}</td>
+                                    <td>{{ shortTime(item.timeWindowStart) }} - {{ shortTime(item.timeWindowEnd) }}</td>
+                                    <td><span class="tag" :class="appointmentTag(item.status)">{{ item.status }}</span></td>
+                                    <td class="actions">
+                                        <button class="btn btn-primary btn-sm" :disabled="item.status !== '已确认'" @click="gateIn(item)">进闸</button>
+                                        <button class="btn btn-outline btn-sm" :disabled="item.status !== '已进闸'" @click="completePickup(item)">提箱</button>
+                                        <button class="btn btn-primary btn-sm" :disabled="item.status !== '已提箱'" @click="gateOut(item)">出闸</button>
+                                        <button class="btn btn-danger btn-sm" :disabled="!['待确认','已确认'].includes(item.status)" @click="cancelAppointment(item)">取消</button>
+                                    </td>
+                                </tr>
+                                <tr v-if="activeAppointments.length === 0">
+                                    <td colspan="6" class="empty-cell">暂无有效预约</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+
+                <article class="card">
+                    <div class="card-header"><strong>闸口人工校验</strong></div>
+                    <form class="form-grid import-form" @submit.prevent="manualGateIn">
+                        <label>预约号
+                            <input v-model.trim="gateForm.appointmentNo" placeholder="可选">
+                        </label>
+                        <label>箱号
+                            <input v-model.trim="gateForm.containerNo" placeholder="箱号">
+                        </label>
+                        <label>车牌号
+                            <input v-model.trim="gateForm.truckPlate" placeholder="车牌号">
+                        </label>
+                        <div class="modal-actions import-actions">
+                            <button class="btn btn-primary" type="button" @click="manualGateIn">进闸校验</button>
+                            <button class="btn btn-outline" type="button" @click="manualGateOut">出闸校验</button>
+                        </div>
+                    </form>
+                    <div class="manifest-result" v-if="lastGateResult">
+                        <div class="manifest-result-head">
+                            <strong>{{ lastGateResult.checkResult || '校验结果' }}</strong>
+                            <span>{{ lastGateResult.gateType || '-' }}</span>
+                        </div>
+                        <p class="manifest-result-text">
+                            {{ lastGateResult.blockReason || lastGateResult.ticketNo || '作业通过' }}
+                        </p>
+                    </div>
+                </article>
+            </section>
+
+            <section v-if="currentView === 'exceptions'" class="grid-two import-grid">
+                <article class="card">
+                    <div class="card-header"><strong>异常登记</strong></div>
+                    <form class="form-grid import-form" @submit.prevent="createException">
+                        <label>对象类型
+                            <select v-model="exceptionForm.objectType">
+                                <option value="container">集装箱</option>
+                                <option value="appointment">预约</option>
+                                <option value="gate">闸口</option>
+                                <option value="manual">人工</option>
+                            </select>
+                        </label>
+                        <label>对象 ID
+                            <input v-model.trim="exceptionForm.objectId" placeholder="可选">
+                        </label>
+                        <label>异常类型
+                            <input v-model.trim="exceptionForm.exceptionType" required placeholder="残损 / 箱号不符 / 超窗">
+                        </label>
+                        <label>异常描述
+                            <input v-model.trim="exceptionForm.description" required placeholder="描述异常情况">
+                        </label>
+                        <div class="modal-actions import-actions">
+                            <button class="btn btn-primary" type="submit">登记异常</button>
+                        </div>
+                    </form>
+                </article>
+
+                <article class="card">
+                    <div class="card-header"><strong>异常闭环列表</strong></div>
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>类型</th>
+                                    <th>描述</th>
+                                    <th>状态</th>
+                                    <th>时间</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="item in exceptions" :key="item.id">
+                                    <td>{{ item.exceptionType }}</td>
+                                    <td>{{ item.description }}</td>
+                                    <td><span class="tag" :class="item.status === '已关闭' ? 'tag-gray' : 'tag-orange'">{{ item.status }}</span></td>
+                                    <td>{{ item.createdAt }}</td>
+                                    <td class="actions">
+                                        <button class="btn btn-primary btn-sm" :disabled="item.status === '已关闭'" @click="resolveException(item)">关闭</button>
+                                    </td>
+                                </tr>
+                                <tr v-if="exceptions.length === 0">
+                                    <td colspan="5" class="empty-cell">暂无异常</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+            </section>
+
+            <section v-if="currentView === 'records'" class="grid-two import-grid">
+                <article class="card">
+                    <div class="card-header"><strong>全部预约记录</strong></div>
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>预约号</th>
+                                    <th>箱号</th>
+                                    <th>车牌</th>
+                                    <th>司机</th>
+                                    <th>状态</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="item in appointments" :key="item.id">
+                                    <td>{{ item.appointmentNo }}</td>
+                                    <td>{{ item.containerNo }}</td>
+                                    <td>{{ item.truckPlate }}</td>
+                                    <td>{{ item.driverName || '-' }}</td>
+                                    <td>{{ item.status }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+
+                <article class="card">
+                    <div class="card-header"><strong>闸口记录</strong></div>
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>类型</th>
+                                    <th>箱号</th>
+                                    <th>车牌</th>
+                                    <th>结果</th>
+                                    <th>原因/小票</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="item in gateTransactions" :key="item.id">
+                                    <td>{{ item.gateType }}</td>
+                                    <td>{{ item.containerNo || '-' }}</td>
+                                    <td>{{ item.truckPlate || '-' }}</td>
+                                    <td><span class="tag" :class="item.checkResult === '通过' ? 'tag-green' : 'tag-orange'">{{ item.checkResult }}</span></td>
+                                    <td>{{ item.blockReason || item.ticketNo || '-' }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+            </section>
+        </main>
+    </div>
+
+    <script src="../js/auth-guard.js"></script>
+    <script src="../js/import-lifecycle.js"></script>
+</body>
+</html>

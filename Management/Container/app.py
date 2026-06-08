@@ -5,14 +5,17 @@ import sys
 from flask import Flask, jsonify, redirect, request, send_from_directory, session, url_for
 from sqlalchemy import text
 
+CONTAINER_DIR = Path(__file__).resolve().parent
 MANAGEMENT_DIR = Path(__file__).resolve().parents[1]
-if str(MANAGEMENT_DIR) not in sys.path:
-    sys.path.insert(0, str(MANAGEMENT_DIR))
+for import_dir in (CONTAINER_DIR, MANAGEMENT_DIR):
+    if str(import_dir) not in sys.path:
+        sys.path.insert(0, str(import_dir))
 
 from config import Config
 from Container.models.container_model import Container, Equipment, Ship, Task, User, Yard, db
 from routes.container_route import container_bp
 from routes.equipment_route import equipment_bp
+from routes.import_lifecycle_route import import_bp
 from routes.ship_route import ship_bp
 from routes.task_route import task_bp
 from routes.yard_route import yard_bp
@@ -35,6 +38,7 @@ def create_app():
     app.register_blueprint(ship_bp)
     app.register_blueprint(task_bp)
     app.register_blueprint(yard_bp)
+    app.register_blueprint(import_bp)
 
     def is_public_endpoint():
         endpoint = request.endpoint or ''
@@ -62,6 +66,7 @@ def create_app():
             request.path.startswith('/ships') or
             request.path.startswith('/tasks') or
             request.path.startswith('/equipment') or
+            request.path.startswith('/api/import') or
             request.path.startswith('/api/dashboard')
         ):
             return jsonify({"message": "\u8bf7\u5148\u767b\u5f55"}), 401
@@ -207,6 +212,7 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        ensure_container_import_schema()
         ensure_ship_schema()
         ensure_task_schema()
         ensure_equipment_schema()
@@ -301,6 +307,28 @@ def ensure_ship_schema():
         if 'status' not in columns:
             db.session.execute(text("ALTER TABLE ship ADD COLUMN status TEXT DEFAULT '\u8ba1\u5212\u4e2d'"))
             db.session.commit()
+    except Exception:
+            db.session.rollback()
+
+
+def ensure_container_import_schema():
+    try:
+        columns = {row[1] for row in db.session.execute(text("PRAGMA table_info(container)")).fetchall()}
+        if not columns:
+            return
+        required_columns = {
+            'customs_status': "ALTER TABLE container ADD COLUMN customs_status TEXT DEFAULT '未放行'",
+            'appointment_status': "ALTER TABLE container ADD COLUMN appointment_status TEXT DEFAULT '未预约'",
+            'damage_status': "ALTER TABLE container ADD COLUMN damage_status TEXT DEFAULT '正常'",
+            'locked_by_appointment_id': "ALTER TABLE container ADD COLUMN locked_by_appointment_id INTEGER",
+        }
+        for column, ddl in required_columns.items():
+            if column not in columns:
+                db.session.execute(text(ddl))
+        db.session.execute(text("UPDATE container SET customs_status = '未放行' WHERE customs_status IS NULL OR customs_status = ''"))
+        db.session.execute(text("UPDATE container SET appointment_status = '未预约' WHERE appointment_status IS NULL OR appointment_status = ''"))
+        db.session.execute(text("UPDATE container SET damage_status = '正常' WHERE damage_status IS NULL OR damage_status = ''"))
+        db.session.commit()
     except Exception:
         db.session.rollback()
 

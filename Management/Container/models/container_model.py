@@ -19,6 +19,10 @@ class Container(db.Model):
     layer = db.Column(db.Integer)
     is_dangerous = db.Column('dangerous_goods', db.Boolean, default=False)
     is_refrigerated = db.Column('refrigerated', db.Boolean, default=False)
+    customs_status = db.Column(db.String(20), default='未放行')
+    appointment_status = db.Column(db.String(20), default='未预约')
+    damage_status = db.Column(db.String(20), default='正常')
+    locked_by_appointment_id = db.Column(db.Integer)
 
     @property
     def is_full(self):
@@ -51,6 +55,13 @@ class Container(db.Model):
             "ship_id": self.ship_id,
             "shipId": self.ship_id,
             "status": self.status,
+            "customs_status": self.customs_status or '未放行',
+            "customsStatus": self.customs_status or '未放行',
+            "appointment_status": self.appointment_status or '未预约',
+            "appointmentStatus": self.appointment_status or '未预约',
+            "damage_status": self.damage_status or '正常',
+            "damageStatus": self.damage_status or '正常',
+            "lockedByAppointmentId": self.locked_by_appointment_id,
         }
 
 
@@ -272,4 +283,226 @@ class User(db.Model):
             "username": self.username,
             "role": self.role,
             "lastLoginAt": self.last_login_at,
+        }
+
+
+class Manifest(db.Model):
+    __tablename__ = 'manifest'
+
+    id = db.Column(db.Integer, primary_key=True)
+    ship_id = db.Column(db.Integer)
+    file_name = db.Column(db.String(120))
+    imported_by = db.Column(db.String(50))
+    imported_at = db.Column(db.String(30))
+    status = db.Column(db.String(20), default='已导入')
+    error_count = db.Column(db.Integer, default=0)
+    remark = db.Column(db.String(200))
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "shipId": self.ship_id,
+            "fileName": self.file_name,
+            "importedBy": self.imported_by,
+            "importedAt": self.imported_at,
+            "status": self.status,
+            "errorCount": self.error_count or 0,
+            "remark": self.remark or '',
+        }
+
+
+class ManifestItem(db.Model):
+    __tablename__ = 'manifest_item'
+
+    id = db.Column(db.Integer, primary_key=True)
+    manifest_id = db.Column(db.Integer)
+    container_id = db.Column(db.Integer)
+    container_no = db.Column(db.String(30))
+    container_type = db.Column(db.String(10))
+    size = db.Column(db.String(10))
+    discharge_seq = db.Column(db.Integer)
+    target_yard = db.Column(db.String(30))
+    target_slot = db.Column(db.String(80))
+    check_result = db.Column(db.String(80), default='通过')
+    raw_remark = db.Column(db.String(200))
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "manifestId": self.manifest_id,
+            "containerId": self.container_id,
+            "containerNo": self.container_no,
+            "containerType": self.container_type,
+            "size": self.size,
+            "dischargeSeq": self.discharge_seq,
+            "targetYard": self.target_yard,
+            "targetSlot": self.target_slot,
+            "checkResult": self.check_result,
+            "rawRemark": self.raw_remark or '',
+        }
+
+
+class YardSlot(db.Model):
+    __tablename__ = 'yard_slot'
+
+    id = db.Column(db.Integer, primary_key=True)
+    yard_id = db.Column(db.Integer)
+    yard_name = db.Column(db.String(30))
+    area = db.Column(db.String(20))
+    bay = db.Column(db.Integer)
+    row = db.Column(db.Integer)
+    tier = db.Column(db.Integer)
+    container_id = db.Column(db.Integer)
+    slot_status = db.Column(db.String(20), default='空闲')
+    locked_by = db.Column(db.String(40))
+    updated_at = db.Column(db.String(30))
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "yardId": self.yard_id,
+            "yardName": self.yard_name,
+            "area": self.area,
+            "bay": self.bay,
+            "row": self.row,
+            "tier": self.tier,
+            "containerId": self.container_id,
+            "slotStatus": self.slot_status,
+            "lockedBy": self.locked_by or '',
+            "updatedAt": self.updated_at,
+        }
+
+
+class CustomsRelease(db.Model):
+    __tablename__ = 'customs_release'
+
+    id = db.Column(db.Integer, primary_key=True)
+    container_id = db.Column(db.Integer)
+    customs_status = db.Column(db.String(20), default='未放行')
+    inspection_status = db.Column(db.String(20), default='未商检')
+    release_no = db.Column(db.String(40))
+    released_at = db.Column(db.String(30))
+    hold_reason = db.Column(db.String(200))
+    updated_at = db.Column(db.String(30))
+
+    @property
+    def container(self):
+        return Container.query.get(self.container_id) if self.container_id else None
+
+    def to_dict(self):
+        container = self.container
+        return {
+            "id": self.id,
+            "containerId": self.container_id,
+            "containerNo": container.container_no if container else '',
+            "customsStatus": self.customs_status,
+            "inspectionStatus": self.inspection_status,
+            "releaseNo": self.release_no or '',
+            "releasedAt": self.released_at,
+            "holdReason": self.hold_reason or '',
+            "updatedAt": self.updated_at,
+        }
+
+
+class PickupAppointment(db.Model):
+    __tablename__ = 'pickup_appointment'
+
+    id = db.Column(db.Integer, primary_key=True)
+    appointment_no = db.Column(db.String(40), unique=True, nullable=False)
+    container_id = db.Column(db.Integer)
+    truck_plate = db.Column(db.String(30), nullable=False)
+    driver_name = db.Column(db.String(40))
+    driver_phone = db.Column(db.String(30))
+    customer = db.Column(db.String(80))
+    time_window_start = db.Column(db.String(30))
+    time_window_end = db.Column(db.String(30))
+    status = db.Column(db.String(20), default='已确认')
+    created_at = db.Column(db.String(30))
+    updated_at = db.Column(db.String(30))
+    remark = db.Column(db.String(200))
+
+    @property
+    def container(self):
+        return Container.query.get(self.container_id) if self.container_id else None
+
+    def to_dict(self):
+        container = self.container
+        return {
+            "id": self.id,
+            "appointmentNo": self.appointment_no,
+            "containerId": self.container_id,
+            "containerNo": container.container_no if container else '',
+            "truckPlate": self.truck_plate,
+            "driverName": self.driver_name or '',
+            "driverPhone": self.driver_phone or '',
+            "customer": self.customer or '',
+            "timeWindowStart": self.time_window_start,
+            "timeWindowEnd": self.time_window_end,
+            "status": self.status,
+            "createdAt": self.created_at,
+            "updatedAt": self.updated_at,
+            "remark": self.remark or '',
+            "container": container.to_dict() if container else None,
+        }
+
+
+class GateTransaction(db.Model):
+    __tablename__ = 'gate_transaction'
+
+    id = db.Column(db.Integer, primary_key=True)
+    appointment_id = db.Column(db.Integer)
+    gate_type = db.Column(db.String(10))
+    truck_plate = db.Column(db.String(30))
+    container_no = db.Column(db.String(30))
+    check_result = db.Column(db.String(20))
+    block_reason = db.Column(db.String(200))
+    ticket_no = db.Column(db.String(40))
+    created_at = db.Column(db.String(30))
+
+    @property
+    def appointment(self):
+        return PickupAppointment.query.get(self.appointment_id) if self.appointment_id else None
+
+    def to_dict(self):
+        appointment = self.appointment
+        return {
+            "id": self.id,
+            "appointmentId": self.appointment_id,
+            "appointmentNo": appointment.appointment_no if appointment else '',
+            "gateType": self.gate_type,
+            "truckPlate": self.truck_plate,
+            "containerNo": self.container_no,
+            "checkResult": self.check_result,
+            "blockReason": self.block_reason or '',
+            "ticketNo": self.ticket_no or '',
+            "createdAt": self.created_at,
+        }
+
+
+class ExceptionRecord(db.Model):
+    __tablename__ = 'exception_record'
+
+    id = db.Column(db.Integer, primary_key=True)
+    object_type = db.Column(db.String(30))
+    object_id = db.Column(db.Integer)
+    exception_type = db.Column(db.String(40))
+    description = db.Column(db.String(240))
+    status = db.Column(db.String(20), default='待处理')
+    handler = db.Column(db.String(40))
+    resolution = db.Column(db.String(240))
+    created_at = db.Column(db.String(30))
+    resolved_at = db.Column(db.String(30))
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "objectType": self.object_type,
+            "objectId": self.object_id,
+            "exceptionType": self.exception_type,
+            "description": self.description or '',
+            "status": self.status,
+            "handler": self.handler or '',
+            "resolution": self.resolution or '',
+            "createdAt": self.created_at,
+            "resolvedAt": self.resolved_at,
         }

@@ -4,6 +4,7 @@ from flask import Blueprint, jsonify, request
 from sqlalchemy.exc import IntegrityError
 
 from Container.models.container_model import Equipment, Task, db
+from Container.routes.task_rules import sync_container_after_task, validate_task_transition
 
 
 equipment_bp = Blueprint('equipment_bp', __name__, url_prefix='/equipment')
@@ -178,6 +179,9 @@ def assign_task(equipment_id):
         return jsonify({
             "message": f"\u8be5\u4efb\u52a1\u9700\u8981 {required_type}\uff0c\u4e0d\u80fd\u5206\u914d {equipment.equipment_type}"
         }), 400
+    error = validate_task_transition(task, 'in-progress')
+    if error:
+        return jsonify({"message": error}), 400
 
     _assign_task_to_equipment(equipment, task)
     db.session.commit()
@@ -203,6 +207,8 @@ def agv_dispatch():
 
     assignments = []
     for equipment, task in zip(idle_agvs, agv_tasks):
+        if validate_task_transition(task, 'in-progress'):
+            continue
         _assign_task_to_equipment(equipment, task)
         assignments.append({
             "equipment": equipment.to_dict(),
@@ -225,9 +231,13 @@ def release_equipment(equipment_id):
     task = Task.query.get(equipment.current_task_id) if equipment.current_task_id else None
     now = _now()
     if task:
+        error = validate_task_transition(task, 'completed')
+        if error:
+            return jsonify({"message": error}), 400
         task.status = 'completed'
         task.end_time = now
         task.updated_at = now
+        sync_container_after_task(task)
     equipment.current_task_id = None
     equipment.status = STATUS_IDLE
     equipment.updated_at = now

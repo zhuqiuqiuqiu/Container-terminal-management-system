@@ -11,7 +11,8 @@ from zipfile import ZipFile
 from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy.exc import IntegrityError
 
-from Container.models.container_model import Container, Equipment, Ship, Task, Yard, db
+from Container.models.container_model import Container, Equipment, Manifest, ManifestItem, Ship, Task, Yard, db
+from Container.routes.task_rules import sync_container_after_task
 
 
 ship_bp = Blueprint('ship_bp', __name__, url_prefix='/ships')
@@ -320,6 +321,17 @@ def import_manifest():
         return jsonify({"message": "Excel \u7f3a\u5c11\u201c\u7bb1\u53f7\u201d\u5217"}), 400
 
     ship, created_ship = _get_or_create_ship(ship_name, voyage)
+    manifest = Manifest(
+        ship_id=ship.id,
+        file_name=file.filename,
+        imported_by='system',
+        imported_at=_format_dt(_now()),
+        status='已导入',
+        error_count=0,
+        remark='船舶任务清单导入',
+    )
+    db.session.add(manifest)
+    db.session.flush()
     imported = []
     updated = []
     skipped = []
@@ -357,12 +369,28 @@ def import_manifest():
                 skipped.append({'containerNo': container_no, 'reason': error})
                 continue
             if container and task:
+                db.session.add(ManifestItem(
+                    manifest_id=manifest.id,
+                    container_id=container.id,
+                    container_no=container.container_no,
+                    container_type=container.container_type,
+                    target_yard=container.yard,
+                    target_slot=f"{container.yard or ''}/{container.area or ''}/列{container.column or ''}/层{container.layer or ''}",
+                    check_result='通过',
+                    raw_remark=row_data.get('remark') or '',
+                ))
                 if created:
                     imported.append(container.to_dict())
                 else:
                     updated.append(container.to_dict())
         except Exception as exc:
             skipped.append({'containerNo': container_no, 'reason': str(exc)})
+
+    manifest.error_count = len(skipped)
+    if skipped and (imported or updated):
+        manifest.status = '部分失败'
+    elif skipped and not (imported or updated):
+        manifest.status = '导入失败'
 
     workflow_result = None
     if auto_run:
@@ -377,6 +405,7 @@ def import_manifest():
     return jsonify({
         "message": f"\u8239\u8236\u4efb\u52a1\u5bfc\u5165\u5b8c\u6210\uff1a{ship.name}",
         "ship": ship.to_dict(),
+        "manifest": manifest.to_dict(),
         "createdShip": created_ship,
         "importedCount": len(imported),
         "updatedCount": len(updated),
@@ -623,6 +652,7 @@ def _finish_task(task):
     task.updated_at = finished_at
     task.actual_time = task.estimated_time
     _release_task_equipment(task)
+    sync_container_after_task(task)
 
 
 def _run_workflow_worker(app, ship_id, seconds_per_work_minute):

@@ -10,10 +10,12 @@ container_bp = Blueprint('container_bp', __name__)  #创建一个集装箱功能
 STATUS_FLOW = {
     "\u5728\u8239\u4e0a": "\u5df2\u5378\u8239",
     "\u5728\u8239\u4e2d": "\u5df2\u5378\u8239",
-    "\u5df2\u5378\u8239": "\u5806\u573a\u5b58\u50a8",
+    "\u5df2\u5378\u8239": "\u8f6c\u8fd0\u4e2d",
+    "\u8f6c\u8fd0\u4e2d": "\u5806\u573a\u5b58\u50a8",
     "\u5806\u573a\u5b58\u50a8": "\u7b49\u5f85\u63d0\u7bb1",
-    "\u7b49\u5f85\u63d0\u7bb1": "\u79bb\u6e2f",
-    "\u8f6c\u8fd0\u4e2d": "\u5728\u5806",
+    "\u5728\u573a": "\u7b49\u5f85\u63d0\u7bb1",
+    "\u7b49\u5f85\u63d0\u7bb1": "\u5df2\u88c5\u8f66\u5f85\u51fa\u95f8",
+    "\u5df2\u88c5\u8f66\u5f85\u51fa\u95f8": "\u79bb\u6e2f",
     "\u5728\u5806": "\u5f85\u88c5\u8239",
     "\u5f85\u88c5\u8239": "\u79bb\u6e2f",
 }
@@ -45,7 +47,10 @@ def create_container():
         area=data.get('area') or data.get('zone'),
         column=data.get('column') if data.get('column') is not None else data.get('row'),
         layer=data.get('layer') if data.get('layer') is not None else data.get('tier'),
-        status=data.get('status', '\u5728\u8239\u4e0a')
+        status=data.get('status', '\u5728\u8239\u4e0a'),
+        customs_status=data.get('customs_status') or data.get('customsStatus') or '\u672a\u653e\u884c',
+        appointment_status=data.get('appointment_status') or data.get('appointmentStatus') or '\u672a\u9884\u7ea6',
+        damage_status=data.get('damage_status') or data.get('damageStatus') or '\u6b63\u5e38',
     )
 
     db.session.add(container)
@@ -94,6 +99,9 @@ def update_container(id):
     container.column = data.get('column') if data.get('column') is not None else data.get('row', container.column)
     container.layer = data.get('layer') if data.get('layer') is not None else data.get('tier', container.layer)
     container.status = data.get('status', container.status)
+    container.customs_status = data.get('customs_status') or data.get('customsStatus') or container.customs_status
+    container.appointment_status = data.get('appointment_status') or data.get('appointmentStatus') or container.appointment_status
+    container.damage_status = data.get('damage_status') or data.get('damageStatus') or container.damage_status
 
     try:
         db.session.commit()
