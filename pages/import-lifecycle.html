@@ -147,9 +147,10 @@
                                     <td>{{ shortTime(item.timeWindowStart) }} - {{ shortTime(item.timeWindowEnd) }}</td>
                                     <td><span class="tag" :class="appointmentTag(item.status)">{{ item.status }}</span></td>
                                     <td class="actions">
-                                        <button v-if="canOperateImport" class="btn btn-primary btn-sm" :disabled="item.status !== '已确认'" @click="gateIn(item)">进闸</button>
+                                        <button v-if="canOperateImport" class="btn btn-primary btn-sm" :disabled="item.status !== '已确认'" @click="manualGateIn(item)">人工进闸</button>
                                         <button v-if="canOperateImport" class="btn btn-outline btn-sm" :disabled="item.status !== '已进闸'" @click="completePickup(item)">提箱</button>
-                                        <button v-if="canOperateImport" class="btn btn-primary btn-sm" :disabled="item.status !== '已提箱'" @click="gateOut(item)">出闸</button>
+                                        <button v-if="canOperateImport" class="btn btn-primary btn-sm" :disabled="item.status !== '已提箱'" @click="manualGateOut(item)">人工出闸</button>
+                                        <button v-if="canOperateImport" class="btn btn-outline btn-sm" @click="fillGateForm(item)">填入备用</button>
                                         <button v-if="canWriteAppointment" class="btn btn-danger btn-sm" :disabled="!['待确认','已确认'].includes(item.status)" @click="cancelAppointment(item)">取消</button>
                                     </td>
                                 </tr>
@@ -162,20 +163,21 @@
                 </article>
 
                 <article class="card">
-                    <div class="card-header"><strong>闸口人工校验</strong></div>
-                    <form class="form-grid import-form" @submit.prevent="manualGateIn">
-                        <label>预约号
-                            <input v-model.trim="gateForm.appointmentNo" placeholder="可选">
+                    <div class="card-header"><strong>视觉识别自动闸口</strong></div>
+                    <form class="form-grid import-form" @submit.prevent="submitVisionGate">
+                        <label>闸口动作
+                            <select v-model="visionGateType">
+                                <option value="auto">自动判断</option>
+                                <option value="in">进闸</option>
+                                <option value="out">出闸</option>
+                            </select>
                         </label>
-                        <label>箱号
-                            <input v-model.trim="gateForm.containerNo" placeholder="箱号">
-                        </label>
-                        <label>车牌号
-                            <input v-model.trim="gateForm.truckPlate" placeholder="车牌号">
+                        <label>车牌识别图片
+                            <input type="file" accept="image/*" @change="onVisionImageChange">
                         </label>
                         <div class="modal-actions import-actions">
-                            <button class="btn btn-primary" type="button" @click="manualGateIn">进闸校验</button>
-                            <button class="btn btn-outline" type="button" @click="manualGateOut">出闸校验</button>
+                            <button class="btn btn-primary" type="submit">识别并自动放行</button>
+                            <button class="btn btn-outline" type="button" @click="refreshAll">刷新队列</button>
                         </div>
                     </form>
                     <div class="manifest-result" v-if="lastGateResult">
@@ -187,6 +189,25 @@
                             {{ lastGateResult.blockReason || lastGateResult.ticketNo || '作业通过' }}
                         </p>
                     </div>
+                </article>
+
+                <article class="card">
+                    <div class="card-header"><strong>人工备用进出闸</strong></div>
+                    <form class="form-grid import-form" @submit.prevent="manualGateIn()">
+                        <label>预约号
+                            <input v-model.trim="gateForm.appointmentNo" placeholder="APT-20260608120000000">
+                        </label>
+                        <label>箱号
+                            <input v-model.trim="gateForm.containerNo" placeholder="可由预约单自动带出">
+                        </label>
+                        <label>车牌号
+                            <input v-model.trim="gateForm.truckPlate" placeholder="视觉失败时人工输入">
+                        </label>
+                        <div class="modal-actions import-actions">
+                            <button class="btn btn-primary" type="submit">人工进闸</button>
+                            <button class="btn btn-outline" type="button" @click="manualGateOut()">人工出闸</button>
+                        </div>
+                    </form>
                 </article>
             </section>
 

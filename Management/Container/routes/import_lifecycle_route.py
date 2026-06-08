@@ -1,6 +1,9 @@
+import re
+import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy import or_
 
 from Container.models.container_model import (
@@ -23,8 +26,6 @@ STATUS_LOADED_TRUCK = '已装车待出闸'
 STATUS_DEPARTED = '离港'
 CUSTOMS_RELEASED = '已放行'
 APPOINTMENT_ACTIVE = ('待确认', '已确认', '已进闸', '已提箱')
-
-
 def _now():
     return datetime.now()
 
@@ -77,6 +78,47 @@ def _find_appointment(data):
     return query.order_by(PickupAppointment.id.desc()).first()
 
 
+def _normalize_plate(text):
+    return re.sub(r'[^0-9A-Z\u4e00-\u9fff]', '', (text or '').strip().upper())
+
+
+def _appointment_payload(appointment):
+    container = appointment.container if appointment else None
+    return {
+        "appointmentNo": appointment.appointment_no if appointment else '',
+        "truckPlate": appointment.truck_plate if appointment else '',
+        "containerNo": container.container_no if container else '',
+    }
+
+
+def _find_appointment_by_plate(truck_plate, preferred_gate='auto'):
+    plate = _normalize_plate(truck_plate)
+    if not plate:
+        return None
+
+    candidates = PickupAppointment.query.filter(
+        PickupAppointment.status.in_(APPOINTMENT_ACTIVE),
+    ).order_by(PickupAppointment.id.desc()).all()
+    candidates = [item for item in candidates if _normalize_plate(item.truck_plate) == plate]
+    if not candidates:
+        return None
+
+    if preferred_gate == 'in':
+        for item in candidates:
+            if item.status == '已确认':
+                return item
+    elif preferred_gate == 'out':
+        for item in candidates:
+            if item.status == '已提箱':
+                return item
+
+    for status in ('已确认', '已提箱', '已进闸'):
+        for item in candidates:
+            if item.status == status:
+                return item
+    return candidates[0]
+
+
 def _record_exception(object_type, object_id, exception_type, description):
     record = ExceptionRecord(
         object_type=object_type,
@@ -119,6 +161,26 @@ def _appointment_time_valid(appointment):
     return True, ''
 
 
+def _recognize_plate(image_path):
+    try:
+        from Container.license_plate_recognizer import recognize_plate
+        plate = _normalize_plate(recognize_plate(image_path))
+        if plate:
+            return plate
+    except Exception as exc:
+        raise RuntimeError(f'YOLOv5 + LPRNet 车牌识别失败：{exc}') from exc
+    raise RuntimeError('YOLOv5 + LPRNet 未返回车牌号')
+
+
+def _save_gate_image(file_storage):
+    upload_dir = Path(current_app.instance_path) / 'gate_vision'
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    suffix = Path(file_storage.filename or '').suffix.lower() or '.jpg'
+    path = upload_dir / f'{uuid.uuid4().hex}{suffix}'
+    file_storage.save(path)
+    return path
+
+
 def _container_available_for_pickup(container):
     if not container:
         return False, '集装箱不存在'
@@ -135,6 +197,73 @@ def _container_available_for_pickup(container):
     if existing:
         return False, f'该箱已有未完成预约：{existing.appointment_no}'
     return True, ''
+
+
+def _process_gate_in(appointment, truck_plate, container_no):
+    if not appointment:
+        reason = '未找到有效预约'
+        _record_gate(None, '进闸', truck_plate, container_no, '拦截', reason)
+        _record_exception('gate', None, '闸口拦截', reason)
+        return False, reason, None
+
+    container = appointment.container
+    reason = ''
+    if appointment.status != '已确认':
+        reason = f'预约状态为“{appointment.status}”，不能进闸'
+    elif truck_plate != appointment.truck_plate:
+        reason = '车牌与预约不一致'
+    elif not container or container.container_no != container_no:
+        reason = '箱号与预约不一致'
+    elif (container.customs_status or '未放行') != CUSTOMS_RELEASED:
+        reason = '海关未放行，闸口拦截'
+    else:
+        valid, time_reason = _appointment_time_valid(appointment)
+        if not valid:
+            reason = time_reason
+
+    if reason:
+        _record_gate(appointment, '进闸', truck_plate, container_no, '拦截', reason)
+        _record_exception('appointment', appointment.id, '闸口进场失败', reason)
+        return False, reason, None
+
+    ticket_no = _next_no('TICKET')
+    appointment.status = '已进闸'
+    appointment.updated_at = _format_dt()
+    container.appointment_status = '已进闸'
+    gate_record = _record_gate(appointment, '进闸', truck_plate, container_no, '通过', ticket_no=ticket_no)
+    return True, '闸口进场通过', gate_record
+
+
+def _process_gate_out(appointment, truck_plate, container_no):
+    if not appointment:
+        reason = '未找到有效预约'
+        _record_gate(None, '出闸', truck_plate, container_no, '拦截', reason)
+        _record_exception('gate', None, '闸口拦截', reason)
+        return False, reason, None
+
+    container = appointment.container
+    reason = ''
+    if appointment.status != '已提箱':
+        reason = f'预约状态为“{appointment.status}”，必须完成堆场提箱后才能出闸'
+    elif truck_plate != appointment.truck_plate:
+        reason = '车牌与预约不一致'
+    elif not container or container.container_no != container_no:
+        reason = '车载箱号与预约不一致'
+    elif (container.customs_status or '未放行') != CUSTOMS_RELEASED:
+        reason = '海关放行状态异常，禁止出闸'
+
+    if reason:
+        _record_gate(appointment, '出闸', truck_plate, container_no, '拦截', reason)
+        _record_exception('appointment', appointment.id, '闸口出场失败', reason)
+        return False, reason, None
+
+    appointment.status = '已出闸'
+    appointment.updated_at = _format_dt()
+    container.status = STATUS_DEPARTED
+    container.appointment_status = '已出闸'
+    container.locked_by_appointment_id = None
+    gate_record = _record_gate(appointment, '出闸', truck_plate, container_no, '通过', ticket_no=_next_no('OUT'))
+    return True, '闸口出场通过，集装箱已离港', gate_record
 
 
 @import_bp.route('/overview', methods=['GET'])
@@ -311,41 +440,11 @@ def gate_in():
     truck_plate = (data.get('truckPlate') or data.get('truck_plate') or (appointment.truck_plate if appointment else '')).strip().upper()
     container_no = (data.get('containerNo') or data.get('container_no') or (appointment.container.container_no if appointment and appointment.container else '')).strip()
 
-    if not appointment:
-        reason = '未找到有效预约'
-        _record_gate(None, '进闸', truck_plate, container_no, '拦截', reason)
-        _record_exception('gate', None, '闸口拦截', reason)
-        db.session.commit()
-        return jsonify({"message": reason}), 400
-
-    container = appointment.container
-    reason = ''
-    if appointment.status != '已确认':
-        reason = f'预约状态为“{appointment.status}”，不能进闸'
-    elif truck_plate != appointment.truck_plate:
-        reason = '车牌与预约不一致'
-    elif not container or container.container_no != container_no:
-        reason = '箱号与预约不一致'
-    elif (container.customs_status or '未放行') != CUSTOMS_RELEASED:
-        reason = '海关未放行，闸口拦截'
-    else:
-        valid, time_reason = _appointment_time_valid(appointment)
-        if not valid:
-            reason = time_reason
-
-    if reason:
-        _record_gate(appointment, '进闸', truck_plate, container_no, '拦截', reason)
-        _record_exception('appointment', appointment.id, '闸口进场失败', reason)
-        db.session.commit()
-        return jsonify({"message": reason, "appointment": appointment.to_dict()}), 400
-
-    ticket_no = _next_no('TICKET')
-    appointment.status = '已进闸'
-    appointment.updated_at = _format_dt()
-    container.appointment_status = '已进闸'
-    gate_record = _record_gate(appointment, '进闸', truck_plate, container_no, '通过', ticket_no=ticket_no)
+    ok, message, gate_record = _process_gate_in(appointment, truck_plate, container_no)
     db.session.commit()
-    return jsonify({"message": "闸口进场通过", "ticketNo": ticket_no, "data": gate_record.to_dict(), "appointment": appointment.to_dict()})
+    if not ok:
+        return jsonify({"message": message, "appointment": appointment.to_dict() if appointment else None}), 400
+    return jsonify({"message": message, "ticketNo": gate_record.ticket_no, "data": gate_record.to_dict(), "appointment": appointment.to_dict()})
 
 
 @import_bp.route('/gate/out', methods=['POST'])
@@ -355,38 +454,60 @@ def gate_out():
     truck_plate = (data.get('truckPlate') or data.get('truck_plate') or (appointment.truck_plate if appointment else '')).strip().upper()
     container_no = (data.get('containerNo') or data.get('container_no') or (appointment.container.container_no if appointment and appointment.container else '')).strip()
 
+    ok, message, gate_record = _process_gate_out(appointment, truck_plate, container_no)
+    db.session.commit()
+    if not ok:
+        return jsonify({"message": message, "appointment": appointment.to_dict() if appointment else None}), 400
+    return jsonify({"message": message, "data": gate_record.to_dict(), "appointment": appointment.to_dict()})
+
+
+@import_bp.route('/gate/vision', methods=['POST'])
+def vision_gate():
+    gate_type = (request.form.get('gateType') or request.form.get('gate_type') or 'auto').strip()
+    if gate_type not in ('auto', 'in', 'out'):
+        return jsonify({"message": "闸口类型只能是 auto、in 或 out"}), 400
+
+    image = request.files.get('image') or request.files.get('file')
+    if not image:
+        return jsonify({"message": "请上传闸口识别图片"}), 400
+
+    try:
+        image_path = _save_gate_image(image)
+        truck_plate = _recognize_plate(image_path)
+    except Exception as exc:
+        return jsonify({"message": f"车牌视觉识别失败：{exc}"}), 400
+
+    appointment = _find_appointment_by_plate(truck_plate, gate_type)
     if not appointment:
-        reason = '未找到有效预约'
-        _record_gate(None, '出闸', truck_plate, container_no, '拦截', reason)
-        _record_exception('gate', None, '闸口拦截', reason)
+        reason = f'未找到车牌 {truck_plate} 对应的有效预约'
+        _record_gate(None, '视觉闸口', truck_plate, '', '拦截', reason)
+        _record_exception('gate', None, '视觉闸口拦截', reason)
         db.session.commit()
-        return jsonify({"message": reason}), 400
+        return jsonify({"message": reason, "recognizedPlate": truck_plate}), 404
 
     container = appointment.container
-    reason = ''
-    if appointment.status != '已提箱':
-        reason = f'预约状态为“{appointment.status}”，必须完成堆场提箱后才能出闸'
-    elif truck_plate != appointment.truck_plate:
-        reason = '车牌与预约不一致'
-    elif not container or container.container_no != container_no:
-        reason = '车载箱号与预约不一致'
-    elif (container.customs_status or '未放行') != CUSTOMS_RELEASED:
-        reason = '海关放行状态异常，禁止出闸'
+    container_no = container.container_no if container else ''
+    if gate_type == 'auto':
+        gate_type = 'in' if appointment.status == '已确认' else 'out' if appointment.status == '已提箱' else ''
+    if gate_type == 'in':
+        ok, message, gate_record = _process_gate_in(appointment, truck_plate, container_no)
+    elif gate_type == 'out':
+        ok, message, gate_record = _process_gate_out(appointment, truck_plate, container_no)
+    else:
+        ok, message, gate_record = False, f'预约状态为“{appointment.status}”，当前不能自动进闸或出闸', None
+        _record_gate(appointment, '视觉闸口', truck_plate, container_no, '拦截', message)
+        _record_exception('appointment', appointment.id, '视觉闸口状态异常', message)
 
-    if reason:
-        _record_gate(appointment, '出闸', truck_plate, container_no, '拦截', reason)
-        _record_exception('appointment', appointment.id, '闸口出场失败', reason)
-        db.session.commit()
-        return jsonify({"message": reason, "appointment": appointment.to_dict()}), 400
-
-    appointment.status = '已出闸'
-    appointment.updated_at = _format_dt()
-    container.status = STATUS_DEPARTED
-    container.appointment_status = '已出闸'
-    container.locked_by_appointment_id = None
-    gate_record = _record_gate(appointment, '出闸', truck_plate, container_no, '通过', ticket_no=_next_no('OUT'))
     db.session.commit()
-    return jsonify({"message": "闸口出场通过，集装箱已离港", "data": gate_record.to_dict(), "appointment": appointment.to_dict()})
+    payload = {
+        "message": message,
+        "recognizedPlate": truck_plate,
+        "gateType": '进闸' if gate_type == 'in' else '出闸' if gate_type == 'out' else '自动闸口',
+        "appointment": appointment.to_dict(),
+        "containerNo": container_no,
+        "data": gate_record.to_dict() if gate_record else None,
+    }
+    return (jsonify(payload), 200) if ok else (jsonify(payload), 400)
 
 
 @import_bp.route('/exceptions', methods=['GET'])

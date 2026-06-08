@@ -25,6 +25,13 @@ createApp({
     const exceptions = ref([]);
     const lastGateResult = ref(null);
     const currentUser = ref(null);
+    const visionImage = ref(null);
+    const visionGateType = ref('auto');
+    const gateForm = ref({
+      appointmentNo: '',
+      containerNo: '',
+      truckPlate: '',
+    });
 
     const appointmentForm = ref({
       containerNo: '',
@@ -36,7 +43,6 @@ createApp({
       timeWindowEnd: '',
       remark: '',
     });
-    const gateForm = ref({ appointmentNo: '', containerNo: '', truckPlate: '' });
     const exceptionForm = ref({
       objectType: 'container',
       objectId: '',
@@ -148,6 +154,14 @@ createApp({
       showMessage(`已选择 ${item.containerNo}，请填写车牌和司机信息`);
     }
 
+    function fillGateForm(item) {
+      gateForm.value = {
+        appointmentNo: item.appointmentNo || '',
+        containerNo: item.containerNo || '',
+        truckPlate: item.truckPlate || '',
+      };
+    }
+
     async function createAppointment() {
       if (!canWriteAppointment.value) {
         showMessage('当前角色无权创建预约');
@@ -159,9 +173,9 @@ createApp({
           body: JSON.stringify(appointmentForm.value),
         });
         showMessage(data.message);
-        gateForm.value.appointmentNo = data.data.appointmentNo;
-        gateForm.value.containerNo = data.data.containerNo;
-        gateForm.value.truckPlate = data.data.truckPlate;
+        if (data.data) {
+          fillGateForm(data.data);
+        }
         resetAppointmentForm();
         currentView.value = canOperateImport.value ? 'gate' : 'records';
         await refreshAll();
@@ -183,26 +197,6 @@ createApp({
       }
     }
 
-    async function gateIn(item) {
-      if (!canOperateImport.value) return;
-      try {
-        const data = await apiRequest('/api/import/gate/in', {
-          method: 'POST',
-          body: JSON.stringify({
-            appointmentNo: item.appointmentNo,
-            containerNo: item.containerNo,
-            truckPlate: item.truckPlate,
-          }),
-        });
-        lastGateResult.value = data.data;
-        showMessage(`${data.message}，小票 ${data.ticketNo}`);
-        await refreshAll();
-      } catch (err) {
-        showMessage(err.message);
-        await refreshAll();
-      }
-    }
-
     async function completePickup(item) {
       if (!canOperateImport.value) return;
       try {
@@ -214,55 +208,78 @@ createApp({
       }
     }
 
-    async function gateOut(item) {
+    async function manualGateIn(item = null) {
       if (!canOperateImport.value) return;
-      try {
-        const data = await apiRequest('/api/import/gate/out', {
-          method: 'POST',
-          body: JSON.stringify({
-            appointmentNo: item.appointmentNo,
-            containerNo: item.containerNo,
-            truckPlate: item.truckPlate,
-          }),
-        });
-        lastGateResult.value = data.data;
-        showMessage(data.message);
-        await refreshAll();
-      } catch (err) {
-        showMessage(err.message);
-        await refreshAll();
-      }
-    }
-
-    async function manualGateIn() {
-      if (!canOperateImport.value) return;
+      const payload = item ? {
+        appointmentNo: item.appointmentNo,
+        containerNo: item.containerNo,
+        truckPlate: item.truckPlate,
+      } : gateForm.value;
       try {
         const data = await apiRequest('/api/import/gate/in', {
           method: 'POST',
-          body: JSON.stringify(gateForm.value),
+          body: JSON.stringify(payload),
         });
         lastGateResult.value = data.data;
+        if (data.appointment) fillGateForm(data.appointment);
         showMessage(data.message);
         await refreshAll();
       } catch (err) {
-        lastGateResult.value = { gateType: '进闸', checkResult: '拦截', blockReason: err.message };
+        lastGateResult.value = { gateType: '人工进闸', checkResult: '拦截', blockReason: err.message };
         showMessage(err.message);
         await refreshAll();
       }
     }
 
-    async function manualGateOut() {
+    async function manualGateOut(item = null) {
       if (!canOperateImport.value) return;
+      const payload = item ? {
+        appointmentNo: item.appointmentNo,
+        containerNo: item.containerNo,
+        truckPlate: item.truckPlate,
+      } : gateForm.value;
       try {
         const data = await apiRequest('/api/import/gate/out', {
           method: 'POST',
-          body: JSON.stringify(gateForm.value),
+          body: JSON.stringify(payload),
         });
         lastGateResult.value = data.data;
+        if (data.appointment) fillGateForm(data.appointment);
         showMessage(data.message);
         await refreshAll();
       } catch (err) {
-        lastGateResult.value = { gateType: '出闸', checkResult: '拦截', blockReason: err.message };
+        lastGateResult.value = { gateType: '人工出闸', checkResult: '拦截', blockReason: err.message };
+        showMessage(err.message);
+        await refreshAll();
+      }
+    }
+
+    function onVisionImageChange(event) {
+      visionImage.value = event.target.files && event.target.files[0] ? event.target.files[0] : null;
+    }
+
+    async function submitVisionGate() {
+      if (!canOperateImport.value) return;
+      if (!visionImage.value) {
+        showMessage('请先选择闸口识别图片');
+        return;
+      }
+      try {
+        const formData = new FormData();
+        formData.append('image', visionImage.value);
+        formData.append('gateType', visionGateType.value);
+        const resp = await fetch(`${API_BASE}/api/import/gate/vision`, {
+          method: 'POST',
+          credentials: 'include',
+          body: formData,
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.message || `识别失败：${resp.status}`);
+        lastGateResult.value = data.data;
+        showMessage(`${data.message}；识别车牌 ${data.recognizedPlate || '-'}`);
+        await refreshAll();
+      } catch (err) {
+        lastGateResult.value = { gateType: '视觉闸口', checkResult: '拦截', blockReason: err.message };
         showMessage(err.message);
         await refreshAll();
       }
@@ -334,9 +351,10 @@ createApp({
       exceptions,
       activeAppointments,
       appointmentForm,
-      gateForm,
       exceptionForm,
+      gateForm,
       lastGateResult,
+      visionGateType,
       canOperateImport,
       canWriteAppointment,
       canWriteException,
@@ -349,11 +367,12 @@ createApp({
       createAppointment,
       resetAppointmentForm,
       cancelAppointment,
-      gateIn,
       completePickup,
-      gateOut,
+      fillGateForm,
       manualGateIn,
       manualGateOut,
+      onVisionImageChange,
+      submitVisionGate,
       createException,
       resolveException,
     };
