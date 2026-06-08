@@ -39,7 +39,7 @@
                 <label class="checkline"><input type="checkbox" v-model="filterDangerous"> 危险品</label>
                 <label class="checkline"><input type="checkbox" v-model="filterReefer"> 冷藏箱</label>
                 <button class="btn btn-outline" @click="resetFilters">重置</button>
-                <button class="btn btn-primary push-right" @click="openAddModal">新增集装箱</button>
+                <button v-if="canWriteContainer" class="btn btn-primary push-right" @click="openAddModal">新增集装箱</button>
             </section>
 
             <section class="card">
@@ -77,8 +77,8 @@
                                 <td>{{ c.isDangerous ? '是' : '否' }}</td>
                                 <td>{{ c.isReefer ? '是' : '否' }}</td>
                                 <td class="actions">
-                                    <button class="btn btn-outline btn-sm" @click="openDetailModal(c)">编辑</button>
-                                    <button class="btn btn-primary btn-sm" @click="advanceStatus(c)">流转</button>
+                                    <button class="btn btn-outline btn-sm" @click="openDetailModal(c)">{{ canWriteContainer ? '编辑' : '查看' }}</button>
+                                    <button v-if="canWriteContainer" class="btn btn-primary btn-sm" @click="advanceStatus(c)">流转</button>
                                 </td>
                             </tr>
                             <tr v-if="paginatedContainers.length === 0">
@@ -116,8 +116,8 @@
                 </div>
                 <div class="modal-actions">
                     <button type="button" class="btn btn-outline" @click="showModal = false">取消</button>
-                    <button type="submit" class="btn btn-primary">保存</button>
-                    <button v-if="isEditing" type="button" class="btn btn-danger" @click="deleteContainer">删除</button>
+                    <button v-if="canWriteContainer" type="submit" class="btn btn-primary">保存</button>
+                    <button v-if="isEditing && canWriteContainer" type="button" class="btn btn-danger" @click="deleteContainer">删除</button>
                 </div>
             </form>
         </div>

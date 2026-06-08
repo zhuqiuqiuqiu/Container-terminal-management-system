@@ -13,6 +13,12 @@
     });
   }
 
+  window.addEventListener('auth:user', (event) => {
+    const user = event.detail || {};
+    if (userName) userName.textContent = user.username || '';
+    if (userRole) userRole.textContent = user.role || '';
+  });
+
   fetch('/api/auth/me', { credentials: 'same-origin' })
     .then((resp) => {
       if (!resp.ok) throw new Error('unauthorized');

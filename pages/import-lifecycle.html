@@ -46,7 +46,7 @@
 
             <section class="ship-tabs import-tabs">
                 <button class="tab-btn" :class="{ active: currentView === 'release' }" @click="currentView = 'release'">放行与预约</button>
-                <button class="tab-btn" :class="{ active: currentView === 'gate' }" @click="currentView = 'gate'">闸口作业</button>
+                <button v-if="canOperateImport" class="tab-btn" :class="{ active: currentView === 'gate' }" @click="currentView = 'gate'">闸口作业</button>
                 <button class="tab-btn" :class="{ active: currentView === 'exceptions' }" @click="currentView = 'exceptions'">异常闭环</button>
                 <button class="tab-btn" :class="{ active: currentView === 'records' }" @click="currentView = 'records'">作业记录</button>
             </section>
@@ -77,8 +77,8 @@
                                     <td>{{ item.appointmentStatus }}</td>
                                     <td>{{ formatSlot(item) }}</td>
                                     <td class="actions">
-                                        <button class="btn btn-primary btn-sm" :disabled="item.customsStatus === '已放行'" @click="releaseContainer(item)">放行</button>
-                                        <button class="btn btn-outline btn-sm" :disabled="item.customsStatus !== '已放行'" @click="selectForAppointment(item)">预约</button>
+                                        <button v-if="canOperateImport" class="btn btn-primary btn-sm" :disabled="item.customsStatus === '已放行'" @click="releaseContainer(item)">放行</button>
+                                        <button v-if="canWriteAppointment" class="btn btn-outline btn-sm" :disabled="item.customsStatus !== '已放行'" @click="selectForAppointment(item)">预约</button>
                                     </td>
                                 </tr>
                                 <tr v-if="pickupReadyContainers.length === 0">
@@ -117,14 +117,14 @@
                             <input v-model.trim="appointmentForm.remark" placeholder="特殊说明">
                         </label>
                         <div class="modal-actions import-actions">
-                            <button class="btn btn-primary" type="submit">确认预约</button>
+                            <button v-if="canWriteAppointment" class="btn btn-primary" type="submit">确认预约</button>
                             <button class="btn btn-outline" type="button" @click="resetAppointmentForm">清空</button>
                         </div>
                     </form>
                 </article>
             </section>
 
-            <section v-if="currentView === 'gate'" class="grid-two import-grid">
+            <section v-if="currentView === 'gate' && canOperateImport" class="grid-two import-grid">
                 <article class="card">
                     <div class="card-header"><strong>预约作业队列</strong></div>
                     <div class="table-wrapper">
@@ -147,10 +147,10 @@
                                     <td>{{ shortTime(item.timeWindowStart) }} - {{ shortTime(item.timeWindowEnd) }}</td>
                                     <td><span class="tag" :class="appointmentTag(item.status)">{{ item.status }}</span></td>
                                     <td class="actions">
-                                        <button class="btn btn-primary btn-sm" :disabled="item.status !== '已确认'" @click="gateIn(item)">进闸</button>
-                                        <button class="btn btn-outline btn-sm" :disabled="item.status !== '已进闸'" @click="completePickup(item)">提箱</button>
-                                        <button class="btn btn-primary btn-sm" :disabled="item.status !== '已提箱'" @click="gateOut(item)">出闸</button>
-                                        <button class="btn btn-danger btn-sm" :disabled="!['待确认','已确认'].includes(item.status)" @click="cancelAppointment(item)">取消</button>
+                                        <button v-if="canOperateImport" class="btn btn-primary btn-sm" :disabled="item.status !== '已确认'" @click="gateIn(item)">进闸</button>
+                                        <button v-if="canOperateImport" class="btn btn-outline btn-sm" :disabled="item.status !== '已进闸'" @click="completePickup(item)">提箱</button>
+                                        <button v-if="canOperateImport" class="btn btn-primary btn-sm" :disabled="item.status !== '已提箱'" @click="gateOut(item)">出闸</button>
+                                        <button v-if="canWriteAppointment" class="btn btn-danger btn-sm" :disabled="!['待确认','已确认'].includes(item.status)" @click="cancelAppointment(item)">取消</button>
                                     </td>
                                 </tr>
                                 <tr v-if="activeAppointments.length === 0">
@@ -212,7 +212,7 @@
                             <input v-model.trim="exceptionForm.description" required placeholder="描述异常情况">
                         </label>
                         <div class="modal-actions import-actions">
-                            <button class="btn btn-primary" type="submit">登记异常</button>
+                            <button v-if="canWriteException" class="btn btn-primary" type="submit">登记异常</button>
                         </div>
                     </form>
                 </article>
@@ -237,7 +237,7 @@
                                     <td><span class="tag" :class="item.status === '已关闭' ? 'tag-gray' : 'tag-orange'">{{ item.status }}</span></td>
                                     <td>{{ item.createdAt }}</td>
                                     <td class="actions">
-                                        <button class="btn btn-primary btn-sm" :disabled="item.status === '已关闭'" @click="resolveException(item)">关闭</button>
+                                        <button v-if="canOperateImport" class="btn btn-primary btn-sm" :disabled="item.status === '已关闭'" @click="resolveException(item)">关闭</button>
                                     </td>
                                 </tr>
                                 <tr v-if="exceptions.length === 0">

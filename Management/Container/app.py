@@ -24,6 +24,144 @@ from routes.yard_route import yard_bp
 STATUS_SCHEDULED = '\u8ba1\u5212\u4e2d'
 STATUS_BERTHED = '\u5df2\u9760\u6cca'
 STATUS_DEPARTED = '\u5df2\u79bb\u6e2f'
+ROLE_ADMIN = 'admin'
+ROLE_DISPATCHER = 'dispatcher'
+ROLE_CUSTOMER = 'operator'
+ROLE_LABELS = {
+    ROLE_ADMIN: '\u7ba1\u7406\u5458',
+    ROLE_DISPATCHER: '\u8c03\u5ea6\u5458',
+    ROLE_CUSTOMER: '\u5ba2\u6237',
+}
+ROLE_ALIASES = {
+    '\u8d85\u7ea7\u7ba1\u7406\u5458': ROLE_ADMIN,
+    '\u7ba1\u7406\u5458': ROLE_ADMIN,
+    'admin': ROLE_ADMIN,
+    'administrator': ROLE_ADMIN,
+    'dispatcher': ROLE_DISPATCHER,
+    '\u8c03\u5ea6\u5458': ROLE_DISPATCHER,
+    'operator': ROLE_CUSTOMER,
+    '\u64cd\u4f5c\u5458': ROLE_DISPATCHER,
+    '\u5ba2\u6237': ROLE_CUSTOMER,
+    'customer': ROLE_CUSTOMER,
+    'client': ROLE_CUSTOMER,
+}
+ROLE_PAGE_ACCESS = {
+    ROLE_ADMIN: {'home', 'container', 'yard', 'ship', 'terminal-operations', 'import', 'equipment'},
+    ROLE_DISPATCHER: {'home', 'container', 'ship', 'terminal-operations', 'import', 'equipment'},
+    ROLE_CUSTOMER: {'home', 'container', 'import'},
+}
+ROLE_PERMISSIONS = {
+    ROLE_ADMIN: ['*'],
+    ROLE_DISPATCHER: [
+        'dashboard:read',
+        'container:read',
+        'yard:read',
+        'ship:read',
+        'ship:write',
+        'task:read',
+        'task:write',
+        'equipment:read',
+        'equipment:write',
+        'import:read',
+        'import:operate',
+    ],
+    ROLE_CUSTOMER: [
+        'dashboard:read',
+        'container:read',
+        'yard:read',
+        'ship:read',
+        'task:read',
+        'equipment:read',
+        'import:read',
+        'appointment:write',
+        'exception:write',
+    ],
+}
+DEFAULT_USERS = [
+    ('admin01', 'admin123', ROLE_ADMIN),
+    ('dispatcher01', 'disp123', ROLE_DISPATCHER),
+    ('customer01', 'cust123', ROLE_CUSTOMER),
+]
+
+
+def normalize_role(role):
+    text = (role or '').strip()
+    return ROLE_ALIASES.get(text, ROLE_CUSTOMER)
+
+
+def role_permissions(role):
+    return ROLE_PERMISSIONS.get(normalize_role(role), ROLE_PERMISSIONS[ROLE_CUSTOMER])
+
+
+def user_payload(user):
+    data = user.to_safe_dict()
+    role = normalize_role(data.get('role'))
+    data['roleKey'] = role
+    data['role'] = ROLE_LABELS.get(role, '\u5ba2\u6237')
+    data['permissions'] = role_permissions(role)
+    data['pages'] = sorted(ROLE_PAGE_ACCESS.get(role, ROLE_PAGE_ACCESS[ROLE_CUSTOMER]))
+    return data
+
+
+def _page_key_from_path(path):
+    if path in ('/', '/index.html'):
+        return 'home'
+    mapping = {
+        '/pages/container-management.html': 'container',
+        '/pages/yard-management.html': 'yard',
+        '/pages/ship-plan-management.html': 'ship',
+        '/pages/terminal-operations.html': 'terminal-operations',
+        '/pages/import-lifecycle.html': 'import',
+        '/pages/equipment-management.html': 'equipment',
+    }
+    return mapping.get(path)
+
+
+def _permission_allowed(role, permission):
+    permissions = role_permissions(role)
+    return '*' in permissions or permission in permissions
+
+
+def _path_permission(path, method):
+    if path.startswith('/api/dashboard'):
+        return 'dashboard:read'
+    if path.startswith('/containers'):
+        if method == 'GET':
+            return 'container:read'
+        if method == 'DELETE':
+            return 'container:delete'
+        return 'container:write'
+    if path.startswith('/yards'):
+        if method == 'GET':
+            return 'yard:read'
+        if method == 'DELETE':
+            return 'yard:delete'
+        return 'yard:write'
+    if path.startswith('/ships'):
+        if method == 'GET':
+            return 'ship:read'
+        if method == 'DELETE':
+            return 'ship:delete'
+        return 'ship:write'
+    if path.startswith('/tasks'):
+        return 'task:read' if method == 'GET' else 'task:write'
+    if path.startswith('/equipment'):
+        if method == 'GET':
+            return 'equipment:read'
+        if method == 'DELETE':
+            return 'equipment:delete'
+        return 'equipment:write'
+    if path.startswith('/api/import'):
+        if method == 'GET':
+            return 'import:read'
+        if path == '/api/import/appointments' and method == 'POST':
+            return 'appointment:write'
+        if path.startswith('/api/import/appointments/') and path.endswith('/cancel') and method == 'PUT':
+            return 'appointment:write'
+        if path == '/api/import/exceptions' and method == 'POST':
+            return 'exception:write'
+        return 'import:operate'
+    return None
 
 
 def create_app():
@@ -59,6 +197,16 @@ def create_app():
         if request.path.startswith('/api/auth/login') or request.path.startswith('/api/user/login'):
             return None
         if session.get('user_id'):
+            role = normalize_role(session.get('role'))
+            session['role'] = role
+            page_key = _page_key_from_path(request.path)
+            if page_key and page_key not in ROLE_PAGE_ACCESS.get(role, set()):
+                if request.path.startswith('/pages'):
+                    return redirect('/index.html')
+                return jsonify({"message": "\u5f53\u524d\u89d2\u8272\u65e0\u6743\u8bbf\u95ee\u8be5\u9875\u9762"}), 403
+            permission = _path_permission(request.path, request.method)
+            if permission and not _permission_allowed(role, permission):
+                return jsonify({"message": "\u5f53\u524d\u89d2\u8272\u65e0\u6743\u6267\u884c\u8be5\u64cd\u4f5c"}), 403
             return None
         if (
             request.path.startswith('/containers') or
@@ -132,8 +280,8 @@ def create_app():
         db.session.commit()
         session['user_id'] = user.id
         session['username'] = user.username
-        session['role'] = user.role
-        return jsonify({"message": "\u767b\u5f55\u6210\u529f", "data": user.to_safe_dict()})
+        session['role'] = normalize_role(user.role)
+        return jsonify({"message": "\u767b\u5f55\u6210\u529f", "data": user_payload(user)})
 
     @app.route('/api/user/login', methods=['POST'])
     def legacy_login():
@@ -148,7 +296,7 @@ def create_app():
         if user is None:
             session.clear()
             return jsonify({"message": "\u7528\u6237\u4e0d\u5b58\u5728"}), 401
-        return jsonify({"data": user.to_safe_dict()})
+        return jsonify({"data": user_payload(user)})
 
     @app.route('/api/auth/logout', methods=['POST'])
     def logout():
@@ -222,6 +370,17 @@ def create_app():
 
 
 def seed_data():
+    existing_users = {user.username: user for user in User.query.all()}
+    for username, password, role in DEFAULT_USERS:
+        user = existing_users.get(username)
+        if user is None:
+            db.session.add(User(username=username, password=password, role=role))
+        else:
+            user.role = normalize_role(user.role)
+    for user in existing_users.values():
+        user.role = normalize_role(user.role)
+    db.session.commit()
+
     if Yard.query.first() is None:
         db.session.add_all([
             Yard(yard_name='\u5806\u573aA', usage_type='\u8fdb\u53e3\u7bb1', code='Y-A'),

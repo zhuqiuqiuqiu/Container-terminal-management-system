@@ -24,6 +24,7 @@ createApp({
     const gateTransactions = ref([]);
     const exceptions = ref([]);
     const lastGateResult = ref(null);
+    const currentUser = ref(null);
 
     const appointmentForm = ref({
       containerNo: '',
@@ -46,6 +47,13 @@ createApp({
     const activeAppointments = computed(() => appointments.value.filter(item =>
       ['待确认', '已确认', '已进闸', '已提箱'].includes(item.status)
     ));
+    const hasPermission = (permission) => {
+      const permissions = currentUser.value?.permissions || [];
+      return permissions.includes('*') || permissions.includes(permission);
+    };
+    const canOperateImport = computed(() => hasPermission('import:operate'));
+    const canWriteAppointment = computed(() => hasPermission('appointment:write'));
+    const canWriteException = computed(() => hasPermission('exception:write'));
 
     function showMessage(text) {
       message.value = text;
@@ -117,6 +125,7 @@ createApp({
     }
 
     async function releaseContainer(item) {
+      if (!canOperateImport.value) return;
       try {
         const data = await apiRequest('/api/import/customs/release', {
           method: 'POST',
@@ -140,6 +149,10 @@ createApp({
     }
 
     async function createAppointment() {
+      if (!canWriteAppointment.value) {
+        showMessage('当前角色无权创建预约');
+        return;
+      }
       try {
         const data = await apiRequest('/api/import/appointments', {
           method: 'POST',
@@ -150,7 +163,7 @@ createApp({
         gateForm.value.containerNo = data.data.containerNo;
         gateForm.value.truckPlate = data.data.truckPlate;
         resetAppointmentForm();
-        currentView.value = 'gate';
+        currentView.value = canOperateImport.value ? 'gate' : 'records';
         await refreshAll();
       } catch (err) {
         showMessage(err.message);
@@ -159,6 +172,7 @@ createApp({
     }
 
     async function cancelAppointment(item) {
+      if (!canWriteAppointment.value) return;
       if (!confirm(`确定取消预约 ${item.appointmentNo} 吗？`)) return;
       try {
         const data = await apiRequest(`/api/import/appointments/${item.id}/cancel`, { method: 'PUT' });
@@ -170,6 +184,7 @@ createApp({
     }
 
     async function gateIn(item) {
+      if (!canOperateImport.value) return;
       try {
         const data = await apiRequest('/api/import/gate/in', {
           method: 'POST',
@@ -189,6 +204,7 @@ createApp({
     }
 
     async function completePickup(item) {
+      if (!canOperateImport.value) return;
       try {
         const data = await apiRequest(`/api/import/appointments/${item.id}/pickup`, { method: 'POST' });
         showMessage(data.message);
@@ -199,6 +215,7 @@ createApp({
     }
 
     async function gateOut(item) {
+      if (!canOperateImport.value) return;
       try {
         const data = await apiRequest('/api/import/gate/out', {
           method: 'POST',
@@ -218,6 +235,7 @@ createApp({
     }
 
     async function manualGateIn() {
+      if (!canOperateImport.value) return;
       try {
         const data = await apiRequest('/api/import/gate/in', {
           method: 'POST',
@@ -234,6 +252,7 @@ createApp({
     }
 
     async function manualGateOut() {
+      if (!canOperateImport.value) return;
       try {
         const data = await apiRequest('/api/import/gate/out', {
           method: 'POST',
@@ -250,6 +269,10 @@ createApp({
     }
 
     async function createException() {
+      if (!canWriteException.value) {
+        showMessage('当前角色无权登记异常');
+        return;
+      }
       try {
         const data = await apiRequest('/api/import/exceptions', {
           method: 'POST',
@@ -264,6 +287,7 @@ createApp({
     }
 
     async function resolveException(item) {
+      if (!canOperateImport.value) return;
       try {
         const data = await apiRequest(`/api/import/exceptions/${item.id}/resolve`, {
           method: 'PUT',
@@ -292,6 +316,10 @@ createApp({
       resetAppointmentForm();
       tick();
       window.setInterval(tick, 1000);
+      currentUser.value = window.__CURRENT_USER__ || null;
+      window.addEventListener('auth:user', (event) => {
+        currentUser.value = event.detail || null;
+      });
       refreshAll();
     });
 
@@ -309,6 +337,9 @@ createApp({
       gateForm,
       exceptionForm,
       lastGateResult,
+      canOperateImport,
+      canWriteAppointment,
+      canWriteException,
       formatSlot,
       shortTime,
       appointmentTag,

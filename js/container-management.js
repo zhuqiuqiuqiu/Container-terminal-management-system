@@ -31,6 +31,7 @@ createApp({
     const yardList = ref(['堆场A', '堆场B', '堆场C']);
     const zoneList = ref(['A区', 'B区', 'C区', 'D区', 'Zone-1', 'Zone-2', 'Zone-3', 'Zone-4']);
     const containers = ref([]);
+    const currentUser = ref(null);
     const formData = ref({
       containerNo: '',
       containerType: '20GP',
@@ -117,6 +118,10 @@ createApp({
 
     const totalPages = computed(() => Math.max(1, Math.ceil(filteredContainers.value.length / pageSize)));
     const paginatedContainers = computed(() => filteredContainers.value.slice((currentPageNum.value - 1) * pageSize, currentPageNum.value * pageSize));
+    const canWriteContainer = computed(() => {
+      const permissions = currentUser.value?.permissions || [];
+      return permissions.includes('*') || permissions.includes('container:write');
+    });
     const getStatusTagClass = (s) => ({ '在船上': 'tag tag-blue', '已卸船': 'tag tag-cyan', '堆场存储': 'tag tag-green', '等待提箱': 'tag tag-orange', '转运中': 'tag tag-cyan', '在堆': 'tag tag-green', '待装船': 'tag tag-orange', '离港': 'tag tag-gray' }[s] || 'tag tag-gray');
     const resetFilters = () => {
       searchQuery.value = '';
@@ -129,6 +134,7 @@ createApp({
     };
 
     const openAddModal = () => {
+      if (!canWriteContainer.value) return;
       modalTitle.value = '新增集装箱';
       isEditing.value = false;
       editingId.value = null;
@@ -156,6 +162,10 @@ createApp({
     };
 
     const saveContainer = async () => {
+      if (!canWriteContainer.value) {
+        alert('当前角色只能查看集装箱信息');
+        return;
+      }
       if (!formData.value.containerNo.trim()) {
         alert('请输入箱号');
         return;
@@ -175,6 +185,7 @@ createApp({
     };
 
     const deleteContainer = async () => {
+      if (!canWriteContainer.value) return;
       if (!confirm('确定删除？')) return;
       try {
         await apiRequest(`/containers/${editingId.value}`, { method: 'DELETE' });
@@ -186,6 +197,7 @@ createApp({
     };
 
     const advanceStatus = async (c) => {
+      if (!canWriteContainer.value) return;
       try {
         await apiRequest(`/containers/${c.id}/next_status`, { method: 'PUT' });
         await loadContainers();
@@ -209,6 +221,10 @@ createApp({
     onMounted(() => {
       tick();
       setInterval(tick, 1000);
+      currentUser.value = window.__CURRENT_USER__ || null;
+      window.addEventListener('auth:user', (event) => {
+        currentUser.value = event.detail || null;
+      });
       refreshAll();
     });
 
@@ -232,6 +248,7 @@ createApp({
       filteredContainers,
       paginatedContainers,
       totalPages,
+      canWriteContainer,
       getStatusTagClass,
       resetFilters,
       openAddModal,
