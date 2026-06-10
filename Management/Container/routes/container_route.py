@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request
 from sqlalchemy.exc import IntegrityError
 
 from Container.models.container_model import Container, Yard, db
+from routes.finance_route import ensure_departure_bill
 from Container.routes.yard_route import is_dangerous_yard
 
 
@@ -116,6 +117,7 @@ def update_container(id):
     container.area = data.get('area') or data.get('zone') or container.area
     container.column = data.get('column') if data.get('column') is not None else data.get('row', container.column)
     container.layer = data.get('layer') if data.get('layer') is not None else data.get('tier', container.layer)
+    previous_status = container.status
     container.status = data.get('status', container.status)
     container.customs_status = data.get('customs_status') or data.get('customsStatus') or container.customs_status
     container.appointment_status = data.get('appointment_status') or data.get('appointmentStatus') or container.appointment_status
@@ -125,6 +127,8 @@ def update_container(id):
         return jsonify({"message": error}), 400
 
     try:
+        if previous_status != "\u79bb\u6e2f" and container.status == "\u79bb\u6e2f":
+            ensure_departure_bill(container)
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
@@ -166,6 +170,8 @@ def next_status(id):
 
     next_state = STATUS_FLOW[current_status]
     container.status = next_state
+    if next_state == "\u79bb\u6e2f":
+        ensure_departure_bill(container)
     db.session.commit()
 
     return jsonify({

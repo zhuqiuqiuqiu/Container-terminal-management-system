@@ -94,6 +94,14 @@
     return state.equipment.filter((item) => item.type === type);
   }
 
+  function visibleYards() {
+    return state.yards.length ? state.yards : [
+      { name: 'Yard A', type: '综合堆场', total: 240, used: 0 },
+      { name: 'Yard B', type: '综合堆场', total: 240, used: 0 },
+      { name: 'Yard C', type: '综合堆场', total: 240, used: 0 },
+    ];
+  }
+
   function activeShip() {
     return state.ships.find((ship) => ship.berth && ship.status !== STATUS_DEPARTED)
       || state.ships.find((ship) => ship.status !== STATUS_DEPARTED)
@@ -167,7 +175,10 @@
   function getCanvasSize() {
     const parent = canvas.parentElement;
     const width = Math.max(360, Math.floor(parent ? parent.getBoundingClientRect().width : 1100));
-    const height = width < 860 ? 960 : Math.max(680, Math.min(900, Math.round(width * 0.62)));
+    const yardCount = Math.max(visibleYards().length, 3);
+    const height = width < 860
+      ? Math.max(960, 520 + yardCount * 146)
+      : Math.max(680, Math.min(1200, 390 + Math.ceil(yardCount / 3) * 238));
     return { width, height };
   }
 
@@ -295,6 +306,8 @@
     const x = layout.quayXs[index] || layout.quayXs[0];
     const y = layout.quayY;
     const color = statusColor(crane.status);
+    const hasTask = Boolean(crane.taskName || crane.containerNo);
+    const isActive = crane.status === STATUS_WORKING && hasTask;
     ctx.strokeStyle = crane.status === STATUS_FAULT ? '#ef4444' : '#14b8a6';
     ctx.lineWidth = 5;
     ctx.beginPath();
@@ -309,9 +322,9 @@
     ctx.lineTo(x + 16, y + 86);
     ctx.stroke();
 
-    const phase = performance.now() / 900 + index;
+    const phase = isActive ? performance.now() / 900 + index : index;
     const trolleyX = x + 12 + Math.sin(phase) * 36;
-    const hookY = y + 34 + Math.abs(Math.sin(phase * 1.35)) * 32;
+    const hookY = y + 34 + (isActive ? Math.abs(Math.sin(phase * 1.35)) * 32 : 10);
     fillRoundRect(ctx, trolleyX - 10, y - 8, 20, 14, 3, '#fbbf24');
     ctx.strokeStyle = '#fbbf24';
     ctx.lineWidth = 2;
@@ -348,7 +361,9 @@
     ctx.moveTo(x, y);
     ctx.lineTo(x, y + 68);
     ctx.stroke();
-    const sway = Math.sin(performance.now() / 850 + index) * (yardRect.w * 0.25);
+    const hasTask = Boolean(crane.taskName || crane.containerNo);
+    const isActive = crane.status === STATUS_WORKING && hasTask;
+    const sway = (isActive ? Math.sin(performance.now() / 850 + index) : 0) * (yardRect.w * 0.25);
     fillRoundRect(ctx, x + sway - 17, y + 26, 34, 8, 2, '#fbbf24');
     drawText(ctx, crane.name, x, y - 8, {
       color: '#dcfce7',
@@ -368,14 +383,11 @@
   }
 
   function drawYards(ctx, layout) {
-    const yards = state.yards.length ? state.yards.slice(0, 3) : [
-      { name: 'Yard A', type: '综合堆场', total: 240, used: 0 },
-      { name: 'Yard B', type: '综合堆场', total: 240, used: 0 },
-      { name: 'Yard C', type: '综合堆场', total: 240, used: 0 },
-    ];
+    const yards = visibleYards();
     const yardCranes = byType(TYPE_YARD);
     yards.forEach((yard, index) => {
       const rect = layout.yards[index];
+      if (!rect) return;
       const actual = state.containers.filter((item) => item.yard === yard.name && item.status !== '离港').length;
       const used = Math.max(yard.used, actual);
       const rate = yard.total ? Math.min(100, Math.round((used / yard.total) * 100)) : Math.round(yard.rate || 0);
@@ -498,7 +510,8 @@
   }
 
   function drawAgv(ctx, agv, index, layout) {
-    const isWorking = agv.status === STATUS_WORKING;
+    const hasTask = Boolean(agv.task);
+    const isWorking = agv.status === STATUS_WORKING && hasTask;
     const target = transferPointForAgv(agv, layout, index);
     const start = quayPointForAgv(agv, layout, index);
     const points = [
@@ -649,6 +662,8 @@
 
   function buildLayout(width, height) {
     const pad = 28;
+    const yardsForLayout = visibleYards();
+    const yardCount = Math.max(yardsForLayout.length, 3);
     if (width < 860) {
       const workW = width - pad * 2;
       const yardTop = 520;
@@ -666,17 +681,13 @@
         if (item.name) quayPointByName[item.name] = point;
         if (item.code) quayPointByName[item.code] = point;
       });
-      const yards = [0, 1, 2].map((i) => ({
+      const yards = Array.from({ length: yardCount }, (_, i) => ({
         x: pad,
         y: yardTop + i * (yardH + yardGap),
         w: workW,
         h: yardH,
       }));
-      const yardNames = (state.yards.length ? state.yards : [
-        { name: 'Yard A' },
-        { name: 'Yard B' },
-        { name: 'Yard C' },
-      ]).slice(0, 3).map((yard) => yard.name);
+      const yardNames = yardsForLayout.map((yard) => yard.name);
       const transferPoints = yards.map((rect, index) => ({ x: rect.x + rect.w / 2, y: rect.y - 22, yardName: yardNames[index] }));
       const transferPointByYard = Object.fromEntries(transferPoints.map((point) => [point.yardName, point]));
       return {
@@ -699,8 +710,10 @@
     const dockY = 245;
     const yardTop = 390;
     const yardGap = 16;
-    const yardW = (workW - yardGap * 2) / 3;
-    const yardH = Math.max(214, height - yardTop - pad);
+    const yardCols = Math.min(3, yardCount);
+    const yardRows = Math.ceil(yardCount / yardCols);
+    const yardW = (workW - yardGap * (yardCols - 1)) / yardCols;
+    const yardH = Math.max(214, Math.min(260, (height - yardTop - pad - yardGap * (yardRows - 1)) / yardRows));
     const quayCount = Math.max(1, Math.min(3, byType(TYPE_QUAY).length || 2));
     const quayXs = Array.from({ length: quayCount }, (_, i) => pad + shipW + 64 + i * 96);
     const roadY = dockY + 38;
@@ -713,17 +726,13 @@
       if (item.name) quayPointByName[item.name] = point;
       if (item.code) quayPointByName[item.code] = point;
     });
-    const yards = [0, 1, 2].map((i) => ({
-      x: pad + i * (yardW + yardGap),
-      y: yardTop,
+    const yards = Array.from({ length: yardCount }, (_, i) => ({
+      x: pad + (i % yardCols) * (yardW + yardGap),
+      y: yardTop + Math.floor(i / yardCols) * (yardH + yardGap),
       w: yardW,
       h: yardH,
     }));
-    const yardNames = (state.yards.length ? state.yards : [
-      { name: 'Yard A' },
-      { name: 'Yard B' },
-      { name: 'Yard C' },
-    ]).slice(0, 3).map((yard) => yard.name);
+    const yardNames = yardsForLayout.map((yard) => yard.name);
     const transferPoints = yards.map((rect, index) => ({ x: rect.x + rect.w / 2, y: rect.y - 28, yardName: yardNames[index] }));
     const transferPointByYard = Object.fromEntries(transferPoints.map((point) => [point.yardName, point]));
     return {

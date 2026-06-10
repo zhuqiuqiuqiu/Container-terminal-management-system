@@ -15,6 +15,7 @@ from Container.models.container_model import (
     Task,
     db,
 )
+from routes.finance_route import ensure_departure_bill
 
 
 import_bp = Blueprint('import_bp', __name__, url_prefix='/api/import')
@@ -262,6 +263,7 @@ def _process_gate_out(appointment, truck_plate, container_no):
     container.status = STATUS_DEPARTED
     container.appointment_status = '已出闸'
     container.locked_by_appointment_id = None
+    ensure_departure_bill(container)
     gate_record = _record_gate(appointment, '出闸', truck_plate, container_no, '通过', ticket_no=_next_no('OUT'))
     return True, '闸口出场通过，集装箱已离港', gate_record
 
