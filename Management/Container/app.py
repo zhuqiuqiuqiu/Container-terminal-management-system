@@ -563,6 +563,7 @@ def ensure_container_import_schema():
             'damage_status': "ALTER TABLE container ADD COLUMN damage_status TEXT DEFAULT '正常'",
             'locked_by_appointment_id': "ALTER TABLE container ADD COLUMN locked_by_appointment_id INTEGER",
         }
+
         for column, ddl in required_columns.items():
             if column not in columns:
                 db.session.execute(text(ddl))

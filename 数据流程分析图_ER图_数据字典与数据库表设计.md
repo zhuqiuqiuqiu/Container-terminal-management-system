@@ -309,6 +309,17 @@ flowchart TD
 
 ## 3. ER 图
 
+对应关系：
+
+**ship 1 - N container**
+**container 1 - N task**
+**equipment 1 - N task**
+**container 1 - N customs_release**
+**container 1 - N pickup_appointment**
+**pickup_appointment 1 - N gate_transaction**
+**container 1 - N billing_record**
+**manifest 1 - N manifest_item**
+
 ### 3.1 系统核心 ER 图
 
 ```mermaid
