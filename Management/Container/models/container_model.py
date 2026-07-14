@@ -275,6 +275,7 @@ class User(db.Model):
     username = db.Column(db.String(50), unique=True, nullable=False)
     password = db.Column(db.String(100), nullable=False)
     role = db.Column(db.String(20), nullable=False)
+    permissions = db.Column(db.String(500))
     last_login_at = db.Column(db.String(30))
 
     def to_safe_dict(self):
@@ -282,6 +283,7 @@ class User(db.Model):
             "id": self.id,
             "username": self.username,
             "role": self.role,
+            "permissions": self.permissions or '',
             "lastLoginAt": self.last_login_at,
         }
 

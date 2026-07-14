@@ -53,7 +53,7 @@ ROLE_ALIASES = {
     'finance': ROLE_FINANCE,
 }
 ROLE_PAGE_ACCESS = {
-    ROLE_ADMIN: {'home', 'container', 'yard', 'ship', 'terminal-operations', 'import', 'equipment', 'finance', 'dangerous'},
+    ROLE_ADMIN: {'home', 'container', 'yard', 'ship', 'terminal-operations', 'import', 'equipment', 'finance', 'dangerous', 'users'},
     ROLE_DISPATCHER: {'home', 'container', 'ship', 'terminal-operations', 'import', 'equipment', 'dangerous'},
     ROLE_CUSTOMER: {'home', 'container', 'import'},
     ROLE_FINANCE: {'home', 'container', 'finance'},
@@ -93,6 +93,46 @@ ROLE_PERMISSIONS = {
         'finance:write',
     ],
 }
+PERMISSION_CATALOG = [
+    ('dashboard:read', '首页大屏', '查看首页统计与全局展示'),
+    ('container:read', '集装箱查看', '查看集装箱基础信息'),
+    ('container:write', '集装箱维护', '新增和修改集装箱'),
+    ('container:delete', '集装箱删除', '删除集装箱'),
+    ('yard:read', '堆场查看', '查看堆场与箱位'),
+    ('yard:write', '堆场维护', '新增和修改堆场、箱位分配'),
+    ('yard:delete', '堆场删除', '删除空堆场'),
+    ('ship:read', '船舶查看', '查看船舶计划'),
+    ('ship:write', '船舶维护', '新增、修改和启动船舶作业'),
+    ('ship:delete', '船舶删除', '删除船舶计划'),
+    ('task:read', '任务查看', '查看码头作业单'),
+    ('task:write', '任务维护', '新增、修改和推进作业单'),
+    ('equipment:read', '设备查看', '查看设备状态'),
+    ('equipment:write', '设备维护', '新增、修改、分配和维修设备'),
+    ('equipment:delete', '设备删除', '删除设备'),
+    ('import:read', '进口查看', '查看进口闭环数据'),
+    ('import:operate', '进口操作', '执行放行、闸口、提箱流程'),
+    ('appointment:write', '预约维护', '新增或取消提箱预约'),
+    ('exception:write', '异常登记', '登记进口异常'),
+    ('dangerous:read', '危险品查看', '查看危险品申报'),
+    ('dangerous:write', '危险品维护', '维护危险品申报和状态'),
+    ('finance:read', '财务查看', '查看账单和汇总'),
+    ('finance:write', '财务维护', '生成和结算账单'),
+    ('user:read', '用户查看', '查看用户与权限'),
+    ('user:write', '用户维护', '新增和修改账号权限'),
+    ('user:delete', '用户删除', '删除非当前账号'),
+]
+VALID_PERMISSIONS = {item[0] for item in PERMISSION_CATALOG}
+PERMISSION_PAGE_ACCESS = {
+    'dashboard:read': {'home'},
+    'container:read': {'container'},
+    'yard:read': {'yard'},
+    'ship:read': {'ship'},
+    'task:read': {'terminal-operations'},
+    'equipment:read': {'equipment'},
+    'import:read': {'import'},
+    'dangerous:read': {'dangerous'},
+    'finance:read': {'finance'},
+}
 DEFAULT_USERS = [
     ('admin01', 'admin123', ROLE_ADMIN),
     ('dispatcher01', 'disp123', ROLE_DISPATCHER),
@@ -110,13 +150,37 @@ def role_permissions(role):
     return ROLE_PERMISSIONS.get(normalize_role(role), ROLE_PERMISSIONS[ROLE_CUSTOMER])
 
 
+def user_extra_permissions(user):
+    raw = (getattr(user, 'permissions', '') or '').strip()
+    if not raw:
+        return []
+    values = [item.strip() for item in raw.replace(';', ',').split(',')]
+    return [item for item in values if item in VALID_PERMISSIONS]
+
+
+def user_permissions(user):
+    merged = list(role_permissions(user.role if user else ROLE_CUSTOMER))
+    for permission in user_extra_permissions(user):
+        if permission not in merged:
+            merged.append(permission)
+    return merged
+
+
+def pages_for_permissions(role, permissions):
+    pages = set(ROLE_PAGE_ACCESS.get(normalize_role(role), ROLE_PAGE_ACCESS[ROLE_CUSTOMER]))
+    for permission in permissions:
+        pages.update(PERMISSION_PAGE_ACCESS.get(permission, set()))
+    return sorted(pages)
+
+
 def user_payload(user):
     data = user.to_safe_dict()
     role = normalize_role(data.get('role'))
     data['roleKey'] = role
     data['role'] = ROLE_LABELS.get(role, '\u5ba2\u6237')
-    data['permissions'] = role_permissions(role)
-    data['pages'] = sorted(ROLE_PAGE_ACCESS.get(role, ROLE_PAGE_ACCESS[ROLE_CUSTOMER]))
+    data['extraPermissions'] = user_extra_permissions(user)
+    data['permissions'] = user_permissions(user)
+    data['pages'] = pages_for_permissions(role, data['permissions'])
     return data
 
 
@@ -132,6 +196,7 @@ def _page_key_from_path(path):
         '/pages/equipment-management.html': 'equipment',
         '/pages/finance-billing.html': 'finance',
         '/pages/dangerous-management.html': 'dangerous',
+        '/pages/user-management.html': 'users',
     }
     return mapping.get(path)
 
@@ -184,7 +249,34 @@ def _path_permission(path, method):
         return 'finance:read' if method == 'GET' else 'finance:write'
     if path.startswith('/api/dangerous'):
         return 'dangerous:read' if method == 'GET' else 'dangerous:write'
+    if path.startswith('/api/users'):
+        if method == 'GET':
+            return 'user:read'
+        if method == 'DELETE':
+            return 'user:delete'
+        return 'user:write'
     return None
+
+
+def _clean_permissions(values):
+    if isinstance(values, str):
+        candidates = values.replace(';', ',').split(',')
+    else:
+        candidates = values or []
+    cleaned = []
+    for item in candidates:
+        permission = str(item or '').strip()
+        if permission in VALID_PERMISSIONS and permission not in cleaned:
+            cleaned.append(permission)
+    return cleaned
+
+
+def _admin_count(exclude_user_id=None):
+    users = User.query.all()
+    return sum(
+        1 for user in users
+        if user.id != exclude_user_id and normalize_role(user.role) == ROLE_ADMIN
+    )
 
 
 def create_app():
@@ -222,15 +314,24 @@ def create_app():
         if request.path.startswith('/api/auth/login') or request.path.startswith('/api/user/login'):
             return None
         if session.get('user_id'):
+            user = User.query.get(session.get('user_id'))
+            if user is None:
+                session.clear()
+                if request.path.startswith('/api/'):
+                    return jsonify({"message": "\u7528\u6237\u4e0d\u5b58\u5728"}), 401
+                return redirect(url_for('login_page'))
             role = normalize_role(session.get('role'))
+            role = normalize_role(user.role)
             session['role'] = role
+            permissions = user_permissions(user)
+            allowed_pages = set(pages_for_permissions(role, permissions))
             page_key = _page_key_from_path(request.path)
-            if page_key and page_key not in ROLE_PAGE_ACCESS.get(role, set()):
+            if page_key and page_key not in allowed_pages:
                 if request.path.startswith('/pages'):
                     return redirect('/index.html')
                 return jsonify({"message": "\u5f53\u524d\u89d2\u8272\u65e0\u6743\u8bbf\u95ee\u8be5\u9875\u9762"}), 403
             permission = _path_permission(request.path, request.method)
-            if permission and not _permission_allowed(role, permission):
+            if permission and '*' not in permissions and permission not in permissions:
                 return jsonify({"message": "\u5f53\u524d\u89d2\u8272\u65e0\u6743\u6267\u884c\u8be5\u64cd\u4f5c"}), 403
             return None
         if (
@@ -242,7 +343,8 @@ def create_app():
             request.path.startswith('/api/import') or
             request.path.startswith('/api/finance') or
             request.path.startswith('/api/dangerous') or
-            request.path.startswith('/api/dashboard')
+            request.path.startswith('/api/dashboard') or
+            request.path.startswith('/api/users')
         ):
             return jsonify({"message": "\u8bf7\u5148\u767b\u5f55"}), 401
         return redirect(url_for('login_page'))
@@ -329,6 +431,84 @@ def create_app():
     def logout():
         session.clear()
         return jsonify({"message": "\u5df2\u9000\u51fa\u767b\u5f55"})
+
+    @app.route('/api/users/options', methods=['GET'])
+    def user_options():
+        return jsonify({
+            "roles": [
+                {"value": key, "label": label, "permissions": role_permissions(key)}
+                for key, label in ROLE_LABELS.items()
+            ],
+            "permissions": [
+                {"value": value, "label": label, "description": description}
+                for value, label, description in PERMISSION_CATALOG
+            ],
+        })
+
+    @app.route('/api/users', methods=['GET'])
+    def list_users():
+        users = User.query.order_by(User.id).all()
+        return jsonify([user_payload(user) for user in users])
+
+    @app.route('/api/users', methods=['POST'])
+    def create_user():
+        data = request.get_json(silent=True) or {}
+        username = (data.get('username') or '').strip()
+        password = data.get('password') or ''
+        role = normalize_role(data.get('role'))
+        permissions = _clean_permissions(data.get('permissions') or data.get('extraPermissions') or [])
+        if not username or not password:
+            return jsonify({"message": "\u7528\u6237\u540d\u548c\u5bc6\u7801\u4e0d\u80fd\u4e3a\u7a7a"}), 400
+        if User.query.filter_by(username=username).first():
+            return jsonify({"message": "\u7528\u6237\u540d\u5df2\u5b58\u5728"}), 409
+        user = User(
+            username=username,
+            password=password,
+            role=role,
+            permissions=','.join(permissions),
+        )
+        db.session.add(user)
+        db.session.commit()
+        return jsonify({"message": "\u7528\u6237\u5df2\u521b\u5efa", "data": user_payload(user)}), 201
+
+    @app.route('/api/users/<int:user_id>', methods=['PUT'])
+    def update_user(user_id):
+        user = User.query.get_or_404(user_id)
+        data = request.get_json(silent=True) or {}
+        username = (data.get('username') or user.username).strip()
+        if not username:
+            return jsonify({"message": "\u7528\u6237\u540d\u4e0d\u80fd\u4e3a\u7a7a"}), 400
+        duplicate = User.query.filter(User.username == username, User.id != user.id).first()
+        if duplicate:
+            return jsonify({"message": "\u7528\u6237\u540d\u5df2\u5b58\u5728"}), 409
+
+        new_role = normalize_role(data.get('role', user.role))
+        if user.id == session.get('user_id') and normalize_role(user.role) == ROLE_ADMIN and new_role != ROLE_ADMIN:
+            return jsonify({"message": "\u4e0d\u80fd\u5c06\u5f53\u524d\u767b\u5f55\u7ba1\u7406\u5458\u964d\u6743"}), 400
+        if normalize_role(user.role) == ROLE_ADMIN and new_role != ROLE_ADMIN and _admin_count(exclude_user_id=user.id) == 0:
+            return jsonify({"message": "\u7cfb\u7edf\u81f3\u5c11\u9700\u4fdd\u7559\u4e00\u4e2a\u7ba1\u7406\u5458\u8d26\u53f7"}), 400
+
+        user.username = username
+        if data.get('password'):
+            user.password = data.get('password')
+        user.role = new_role
+        user.permissions = ','.join(_clean_permissions(data.get('permissions') or data.get('extraPermissions') or []))
+        db.session.commit()
+        if user.id == session.get('user_id'):
+            session['username'] = user.username
+            session['role'] = normalize_role(user.role)
+        return jsonify({"message": "\u7528\u6237\u5df2\u66f4\u65b0", "data": user_payload(user)})
+
+    @app.route('/api/users/<int:user_id>', methods=['DELETE'])
+    def delete_user(user_id):
+        user = User.query.get_or_404(user_id)
+        if user.id == session.get('user_id'):
+            return jsonify({"message": "\u4e0d\u80fd\u5220\u9664\u5f53\u524d\u767b\u5f55\u8d26\u53f7"}), 400
+        if normalize_role(user.role) == ROLE_ADMIN and _admin_count(exclude_user_id=user.id) == 0:
+            return jsonify({"message": "\u7cfb\u7edf\u81f3\u5c11\u9700\u4fdd\u7559\u4e00\u4e2a\u7ba1\u7406\u5458\u8d26\u53f7"}), 400
+        db.session.delete(user)
+        db.session.commit()
+        return jsonify({"message": "\u7528\u6237\u5df2\u5220\u9664"})
 
     @app.route('/api/dashboard/stats', methods=['GET'])
     def dashboard_stats():
@@ -648,11 +828,12 @@ def ensure_user_schema():
                 "username VARCHAR(50) UNIQUE NOT NULL, "
                 "password VARCHAR(100) NOT NULL, "
                 "role VARCHAR(20) NOT NULL CHECK (role IN ('admin', 'dispatcher', 'operator', 'finance')), "
+                "permissions VARCHAR(500), "
                 "last_login_at VARCHAR(30)"
                 ")"
             ))
             db.session.execute(text(
-                "INSERT INTO user (id, username, password, role, last_login_at) "
+                "INSERT INTO user (id, username, password, role, permissions, last_login_at) "
                 "SELECT id, username, password, "
                 "CASE "
                 "WHEN role IN ('admin', 'dispatcher', 'operator', 'finance') THEN role "
@@ -660,9 +841,13 @@ def ensure_user_schema():
                 "WHEN role IN ('\u8c03\u5ea6\u5458', '\u64cd\u4f5c\u5458') THEN 'dispatcher' "
                 "WHEN role IN ('\u8d22\u52a1', '\u8d22\u52a1\u4eba\u5458') THEN 'finance' "
                 "ELSE 'operator' END, "
+                "NULL, "
                 "last_login_at FROM user_old_role_migration"
             ))
             db.session.execute(text("DROP TABLE user_old_role_migration"))
+        columns = {column[1] for column in db.session.execute(text("PRAGMA table_info(user)")).fetchall()}
+        if columns and 'permissions' not in columns:
+            db.session.execute(text("ALTER TABLE user ADD COLUMN permissions TEXT"))
         db.session.commit()
     except Exception:
         db.session.rollback()

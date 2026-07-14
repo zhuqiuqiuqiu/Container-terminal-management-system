@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTMS · 用户权限管理</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+</head>
+<body data-auth-page="users">
+    <div id="app" class="module-shell">
+        <header class="app-header">
+            <a class="back-link" href="../index.html">← 返回主页</a>
+            <div>
+                <h1>用户权限管理</h1>
+                <p>账号创建、角色配置与功能权限分配</p>
+            </div>
+            <span class="time-display">{{ currentTime }}</span>
+        </header>
+
+        <main class="main-content">
+            <section v-if="message" class="auto-berth-message">{{ message }}</section>
+
+            <section class="home-stat-grid">
+                <article class="home-stat-card">
+                    <span>账号总数</span>
+                    <strong>{{ users.length }}</strong>
+                    <small>数据库 user 表</small>
+                </article>
+                <article class="home-stat-card">
+                    <span>管理员</span>
+                    <strong>{{ roleCount('admin') }}</strong>
+                    <small>拥有全部权限</small>
+                </article>
+                <article class="home-stat-card">
+                    <span>自定义授权</span>
+                    <strong>{{ customPermissionCount }}</strong>
+                    <small>配置了额外权限的账号</small>
+                </article>
+            </section>
+
+            <section class="card">
+                <div class="card-header">
+                    <div>
+                        <strong>账号列表</strong>
+                        <span>新增账号保存后即可登录</span>
+                    </div>
+                    <button class="btn btn-primary" @click="openDialog()">新增账号</button>
+                </div>
+                <div class="toolbar compact-toolbar">
+                    <input v-model.trim="searchQuery" placeholder="搜索用户名、角色或权限">
+                    <button class="btn btn-outline" @click="refreshAll">刷新</button>
+                </div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>用户名</th>
+                                <th>角色</th>
+                                <th>额外权限</th>
+                                <th>可访问页面</th>
+                                <th>上次登录</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="user in filteredUsers" :key="user.id">
+                                <td><strong>{{ user.username }}</strong></td>
+                                <td><span class="tag tag-blue">{{ user.role }}</span></td>
+                                <td>
+                                    <span v-if="!user.extraPermissions.length">角色默认</span>
+                                    <span v-else class="permission-inline">{{ user.extraPermissions.map(permissionLabel).join('、') }}</span>
+                                </td>
+                                <td>{{ pageText(user.pages) }}</td>
+                                <td>{{ user.lastLoginAt || '-' }}</td>
+                                <td class="actions">
+                                    <button class="btn btn-outline btn-sm" @click="openDialog(user)">编辑</button>
+                                    <button class="btn btn-danger btn-sm" @click="deleteUser(user)">删除</button>
+                                </td>
+                            </tr>
+                            <tr v-if="filteredUsers.length === 0">
+                                <td colspan="6" class="empty-cell">暂无用户数据</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <div v-if="showDialog" class="modal-overlay">
+                <section class="modal user-modal">
+                    <h2>{{ editingUserId ? '编辑账号' : '新增账号' }}</h2>
+                    <form @submit.prevent="saveUser">
+                        <div class="form-grid">
+                            <label>用户名<input v-model.trim="form.username" required></label>
+                            <label>密码<input v-model="form.password" :required="!editingUserId" type="password" :placeholder="editingUserId ? '留空则不修改密码' : '请输入登录密码'"></label>
+                            <label>角色
+                                <select v-model="form.role">
+                                    <option v-for="role in roles" :key="role.value" :value="role.value">{{ role.label }}</option>
+                                </select>
+                            </label>
+                        </div>
+
+                        <section class="permission-panel">
+                            <div class="card-header permission-head">
+                                <div>
+                                    <strong>额外权限</strong>
+                                    <span>角色默认权限会自动生效，这里只勾选需要额外开放的功能</span>
+                                </div>
+                                <button type="button" class="btn btn-outline btn-sm" @click="clearPermissions">清空额外权限</button>
+                            </div>
+                            <div class="permission-grid">
+                                <label v-for="permission in permissions" :key="permission.value" class="permission-option">
+                                    <input type="checkbox" :value="permission.value" v-model="form.permissions" :disabled="roleHasPermission(permission.value)">
+                                    <span>
+                                        <strong>{{ permission.label }}</strong>
+                                        <small>{{ permission.description }}</small>
+                                    </span>
+                                </label>
+                            </div>
+                        </section>
+
+                        <div class="modal-actions">
+                            <button type="button" class="btn btn-outline" @click="closeDialog">取消</button>
+                            <button class="btn btn-primary" type="submit">保存</button>
+                        </div>
+                    </form>
+                </section>
+            </div>
+        </main>
+    </div>
+    <script src="../js/auth-guard.js"></script>
+    <script src="../js/user-management.js"></script>
+</body>
+</html>

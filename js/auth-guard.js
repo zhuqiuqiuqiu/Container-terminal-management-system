@@ -12,6 +12,7 @@
     equipment: '设备管理',
     dangerous: '危险品管理',
     finance: '财务计费',
+    users: '用户权限管理',
   };
 
   const hrefPages = [
@@ -24,6 +25,7 @@
     ['equipment-management.html', 'equipment'],
     ['dangerous-management.html', 'dangerous'],
     ['finance-billing.html', 'finance'],
+    ['user-management.html', 'users'],
   ];
 
   function pageFromHref(href) {

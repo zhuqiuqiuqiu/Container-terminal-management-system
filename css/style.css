@@ -241,6 +241,17 @@ th { background: #e8f0f8; color: #1a3a5c; }
 }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 
+.user-modal { width: min(920px, calc(100vw - 32px)); }
+.permission-panel { margin-top: 14px; border: 1px solid #d7e3ee; border-radius: 8px; padding: 12px; background: #f8fbfe; }
+.permission-head { padding: 0 0 10px; margin-bottom: 10px; border-bottom: 1px solid #d7e3ee; }
+.permission-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; max-height: 360px; overflow: auto; padding-right: 4px; }
+.permission-option { display: grid; grid-template-columns: 18px 1fr; gap: 8px; align-items: start; padding: 10px; border: 1px solid #d7e3ee; border-radius: 8px; background: #fff; }
+.permission-option input { width: 16px; height: 16px; margin-top: 2px; }
+.permission-option strong { display: block; color: var(--text); font-size: 13px; margin-bottom: 4px; }
+.permission-option small { display: block; color: var(--muted); line-height: 1.45; }
+.permission-option:has(input:disabled) { opacity: 0.62; background: #eef4fa; }
+.permission-inline { color: var(--text); line-height: 1.7; }
+
 .yard-summary {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
